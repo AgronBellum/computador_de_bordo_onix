@@ -4,6 +4,7 @@ import 'package:geolocator/geolocator.dart';
 
 class GpsService {
   StreamSubscription<Position>? _positionStream;
+  Timer? _pollingTimer;
   Position? _lastPosition;
 
   double _accumulatedDistance = 0;
@@ -60,9 +61,15 @@ class GpsService {
   }
 
   void startTracking({
-    Function(double lat, double lng, double distance)? onUpdate,
+    Function(
+      double lat,
+      double lng,
+      double totalDistanceMeters,
+      double deltaMeters,
+    )? onUpdate,
     Function(Position position)? onPositionReceived,
-    Function(Position position)? onPositionIgnored,
+    Function(Position position, String reason)? onPositionIgnored,
+    Function(Position position, double movementMeters)? onMovementMeasured,
     void Function()? onStopped,
     Position? initialPosition,
   }) {
@@ -75,7 +82,7 @@ class GpsService {
     final locationSettings = AndroidSettings(
       accuracy: LocationAccuracy.bestForNavigation,
       distanceFilter: 5,
-      forceLocationManager: false,
+      forceLocationManager: true,
       foregroundNotificationConfig: ForegroundNotificationConfig(
         notificationTitle: 'Computador de bordo ativo',
         notificationText: 'Calculando consumo, distancia e autonomia via GPS.',
@@ -84,55 +91,77 @@ class GpsService {
       ),
     );
 
+    void handlePosition(Position position) {
+      onPositionReceived?.call(position);
+
+      if (position.accuracy > 200) {
+        onPositionIgnored?.call(
+          position,
+          'sinal fraco (${position.accuracy.toStringAsFixed(0)}m)',
+        );
+      }
+
+      if (_lastPosition != null) {
+        final distance = Geolocator.distanceBetween(
+          _lastPosition!.latitude,
+          _lastPosition!.longitude,
+          position.latitude,
+          position.longitude,
+        );
+
+        onMovementMeasured?.call(position, distance);
+
+        if (distance >= 3.0 && distance <= 1000.0) {
+          _accumulatedDistance += distance;
+
+          if (!_distanceController.isClosed) {
+            _distanceController.add(_accumulatedDistance);
+          }
+
+          onUpdate?.call(
+            position.latitude,
+            position.longitude,
+            _accumulatedDistance,
+            distance,
+          );
+        } else if (distance > 1000.0) {
+          onPositionIgnored?.call(
+            position,
+            'salto GPS (${distance.toStringAsFixed(0)}m)',
+          );
+        }
+      }
+
+      _lastPosition = position;
+    }
+
     _positionStream = Geolocator.getPositionStream(
       locationSettings: locationSettings,
     ).listen(
-      (Position position) {
-        onPositionReceived?.call(position);
-
-        if (position.accuracy > 100) {
-          onPositionIgnored?.call(position);
-          return;
-        }
-
-        if (_lastPosition != null) {
-          final distance = Geolocator.distanceBetween(
-            _lastPosition!.latitude,
-            _lastPosition!.longitude,
-            position.latitude,
-            position.longitude,
-          );
-
-          if (distance >= 5.0 && distance <= 500.0) {
-            _accumulatedDistance += distance;
-
-            if (!_distanceController.isClosed) {
-              _distanceController.add(_accumulatedDistance);
-            }
-
-            onUpdate?.call(
-              position.latitude,
-              position.longitude,
-              _accumulatedDistance,
-            );
-          }
-        }
-
-        _lastPosition = position;
-      },
+      handlePosition,
       onError: (_) {
-        stopTracking();
-        onStopped?.call();
+        _positionStream?.cancel();
+        _positionStream = null;
       },
       onDone: () {
-        stopTracking();
-        onStopped?.call();
+        _positionStream = null;
       },
       cancelOnError: false,
     );
+
+    _pollingTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
+      if (!_isTracking) return;
+
+      final position = await getCurrentPosition();
+      if (!_isTracking || position == null) return;
+
+      handlePosition(position);
+    });
   }
 
   void stopTracking() {
+    _pollingTimer?.cancel();
+    _pollingTimer = null;
     _positionStream?.cancel();
     _positionStream = null;
     _isTracking = false;

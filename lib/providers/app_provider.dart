@@ -26,11 +26,18 @@ class AppProvider extends ChangeNotifier {
   bool _hundredKmAlertPlayed = false;
   bool _thirtyMinuteAlertPlayed = false;
   bool _suppressNextGpsConnectedAudio = false;
+  bool _gpsStoppedByUser = false;
   double _gpsDistance = 0;
   int _gpsUpdateCount = 0;
+  int _smartGpsAutoAttempts = 0;
+  int _gpsRawPositionCount = 0;
+  int _gpsIgnoredPositionCount = 0;
+  double? _lastGpsAccuracy;
+  double? _lastGpsMovementMeters;
   Timer? _startupCareTimer;
   Timer? _thirtyMinuteTripTimer;
   Timer? _gpsWatchdogTimer;
+  Timer? _smartGpsStartTimer;
   DateTime? _lastGpsPositionAt;
   double _cityConsumption = 9.0;
   double _tripConsumption = 12.0;
@@ -52,6 +59,10 @@ class AppProvider extends ChangeNotifier {
   bool get soundsEnabled => _soundsEnabled;
   double get gpsDistance => _gpsDistance;
   int get gpsUpdateCount => _gpsUpdateCount;
+  int get gpsRawPositionCount => _gpsRawPositionCount;
+  int get gpsIgnoredPositionCount => _gpsIgnoredPositionCount;
+  double? get lastGpsAccuracy => _lastGpsAccuracy;
+  double? get lastGpsMovementMeters => _lastGpsMovementMeters;
   double get cityConsumption => _cityConsumption;
   double get tripConsumption => _tripConsumption;
   double get fuelPrice => _fuelPrice;
@@ -89,13 +100,14 @@ class AppProvider extends ChangeNotifier {
     await _loadTrips();
     await _restoreLastOdometer();
     _syncTripAlertState();
+    await _audio.playStartupGreeting();
     _scheduleStartupCareAudio();
     _scheduleThirtyMinuteTripAudio();
 
     _isLoading = false;
     notifyListeners();
 
-    await ensureGpsTracking();
+    _scheduleSmartGpsAutoStart();
   }
 
   Future<void> _loadThemeMode() async {
@@ -155,6 +167,11 @@ class AppProvider extends ChangeNotifier {
     await prefs.setString('driving_mode', _drivingMode);
 
     await applySelectedConsumption();
+    if (_drivingMode == 'city') {
+      await _audio.playCityMode();
+    } else {
+      await _audio.playTripMode();
+    }
     notifyListeners();
   }
 
@@ -279,6 +296,7 @@ class AppProvider extends ChangeNotifier {
     _activeTrip = saved;
     _gpsDistance = 0;
     _gpsUpdateCount = 0;
+    _smartGpsAutoAttempts = 0;
     _resetTripAlertState();
     _statusMessage = 'Abastecimento iniciado';
 
@@ -288,10 +306,11 @@ class AppProvider extends ChangeNotifier {
 
     notifyListeners();
     await _audio.playRefuelRecalculated();
-    await _checkFuelLevelAlerts();
+    _syncTripAlertState();
     _scheduleThirtyMinuteTripAudio();
+    _gpsStoppedByUser = false;
     _suppressNextGpsConnectedAudio = true;
-    await ensureGpsTracking();
+    _scheduleSmartGpsAutoStart();
   }
 
   Future<void> refuel({
@@ -342,6 +361,7 @@ class AppProvider extends ChangeNotifier {
     _activeTrip = saved;
     _gpsDistance = 0;
     _gpsUpdateCount = 0;
+    _smartGpsAutoAttempts = 0;
     _resetTripAlertState();
     _statusMessage =
         'Reabastecido: ${newLiters.toStringAsFixed(1)}L + ${remainingFuel.toStringAsFixed(1)}L restantes';
@@ -352,23 +372,48 @@ class AppProvider extends ChangeNotifier {
 
     notifyListeners();
     await _audio.playRefuelRecalculated();
-    await _checkFuelLevelAlerts();
+    _syncTripAlertState();
     _scheduleThirtyMinuteTripAudio();
+    _gpsStoppedByUser = false;
     _suppressNextGpsConnectedAudio = true;
-    await ensureGpsTracking();
+    _scheduleSmartGpsAutoStart();
   }
 
-  Future<void> ensureGpsTracking() async {
-    if (_activeTrip == null || _autoGpsStarting) return;
-    if (_isGpsTracking && _gps.isTracking) return;
+  void _scheduleSmartGpsAutoStart({
+    Duration delay = const Duration(seconds: 3),
+  }) {
+    _smartGpsStartTimer?.cancel();
 
-    _isGpsTracking = false;
+    if (_activeTrip == null || _isGpsTracking || _gpsStoppedByUser) return;
+    if (_smartGpsAutoAttempts >= 5) {
+      _statusMessage = 'GPS automatico sem sinal - toque para iniciar';
+      notifyListeners();
+      return;
+    }
+
+    _statusMessage = 'GPS automatico preparando sinal...';
+    notifyListeners();
+
+    _smartGpsStartTimer = Timer(delay, () async {
+      await _trySmartGpsAutoStart();
+    });
+  }
+
+  Future<void> _trySmartGpsAutoStart() async {
+    if (_activeTrip == null || _isGpsTracking || _gpsStoppedByUser) return;
+    if (_autoGpsStarting) return;
 
     _autoGpsStarting = true;
+    _smartGpsAutoAttempts++;
+
     try {
-      await startGpsTracking();
+      await startGpsTracking(automatic: true);
     } finally {
       _autoGpsStarting = false;
+    }
+
+    if (!_isGpsTracking && !_gpsStoppedByUser && _activeTrip != null) {
+      _scheduleSmartGpsAutoStart(delay: const Duration(seconds: 12));
     }
   }
 
@@ -458,9 +503,15 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> startGpsTracking() async {
+  Future<void> startGpsTracking({bool automatic = false}) async {
+    if (!automatic) {
+      _gpsStoppedByUser = false;
+      _smartGpsStartTimer?.cancel();
+    }
+
+    if (_isGpsTracking && _gps.isTracking) return;
+
     final suppressGpsConnectedAudio = _suppressNextGpsConnectedAudio;
-    _suppressNextGpsConnectedAudio = false;
 
     if (_activeTrip == null) {
       _statusMessage = 'Inicie um abastecimento primeiro';
@@ -479,7 +530,9 @@ class AppProvider extends ChangeNotifier {
     final initialPos = await _gps.getCurrentPosition();
 
     if (initialPos == null) {
-      _statusMessage = 'GPS indisponível - aguardando sinal...';
+      _statusMessage = automatic
+          ? 'GPS ainda sem sinal - toque para iniciar quando estiver pronto'
+          : 'GPS indisponivel - aguardando sinal...';
       notifyListeners();
       return;
     }
@@ -487,50 +540,60 @@ class AppProvider extends ChangeNotifier {
     _isGpsTracking = true;
     _gpsDistance = 0;
     _gpsUpdateCount = 0;
+    _gpsRawPositionCount = 0;
+    _gpsIgnoredPositionCount = 0;
+    _smartGpsAutoAttempts = 0;
+    _lastGpsAccuracy = initialPos.accuracy;
+    _lastGpsMovementMeters = null;
     _lastGpsPositionAt = DateTime.now();
     _statusMessage = 'GPS ativo - sinal OK, rastreando...';
+    _suppressNextGpsConnectedAudio = false;
 
     notifyListeners();
     if (!suppressGpsConnectedAudio) {
       await _audio.playGpsConnected();
     }
 
-    final baseOdometer = _activeTrip!.currentOdometer;
-    final baseDistanceTraveled = _activeTrip!.distanceTraveled;
-    var lastSavedDistanceKm = baseDistanceTraveled.floor();
-
     _gps.startTracking(
       initialPosition: initialPos,
       onPositionReceived: (position) {
+        _gpsRawPositionCount++;
+        _lastGpsAccuracy = position.accuracy;
         _lastGpsPositionAt = DateTime.now();
+        if (_gpsRawPositionCount == 1) {
+          _statusMessage = 'GPS recebendo posicoes: $_gpsRawPositionCount';
+          notifyListeners();
+        }
       },
-      onPositionIgnored: (position) {
-        _statusMessage =
-            'GPS recebeu sinal fraco (${position.accuracy.toStringAsFixed(0)}m)';
+      onMovementMeasured: (position, movementMeters) {
+        _lastGpsMovementMeters = movementMeters;
+        if (_gpsRawPositionCount % 5 == 0) {
+          _statusMessage = 'GPS recebendo posicoes: $_gpsRawPositionCount';
+          notifyListeners();
+        }
+      },
+      onPositionIgnored: (position, reason) {
+        _gpsIgnoredPositionCount++;
+        _lastGpsAccuracy = position.accuracy;
+        _statusMessage = 'GPS ignorou ponto: $reason';
         notifyListeners();
       },
       onStopped: () {
         _handleGpsStopped();
       },
-      onUpdate: (lat, lng, distance) async {
+      onUpdate: (lat, lng, distance, deltaMeters) async {
         if (_activeTrip == null) return;
 
         _gpsDistance = distance;
         _gpsUpdateCount++;
 
-        final distanceKm = distance / 1000;
-        final newOdometer = baseOdometer + distanceKm;
-        final newDistanceTraveled = baseDistanceTraveled + distanceKm;
-        final newWholeDistanceKm = newDistanceTraveled.floor();
-
+        final deltaKm = deltaMeters / 1000;
+        final newOdometer = _activeTrip!.currentOdometer + deltaKm;
         _activeTrip!.updateFromGps(newOdometer, lat, lng);
 
-        if (newWholeDistanceKm <= lastSavedDistanceKm) {
-          notifyListeners();
-          return;
-        }
-
-        lastSavedDistanceKm = newWholeDistanceKm;
+        _statusMessage = 'GPS: +${deltaKm.toStringAsFixed(3)}km | '
+            'Total: ${_activeTrip!.distanceTraveled.toStringAsFixed(1)}km | '
+            'Atualizacoes: $_gpsUpdateCount';
 
         await _db.updateTrip(_activeTrip!);
         await _saveLastOdometer(newOdometer);
@@ -545,10 +608,6 @@ class AppProvider extends ChangeNotifier {
             timestamp: DateTime.now(),
           ),
         );
-
-        _statusMessage = 'GPS: +${distanceKm.toStringAsFixed(2)}km | '
-            'Total: ${_activeTrip!.distanceTraveled.toStringAsFixed(1)}km | '
-            'Atualizações: $_gpsUpdateCount';
 
         notifyListeners();
         await _checkDashboardAudioAlerts();
@@ -565,9 +624,13 @@ class AppProvider extends ChangeNotifier {
     _isGpsTracking = false;
     _gpsDistance = 0;
     _gpsUpdateCount = 0;
+    _gpsRawPositionCount = 0;
+    _gpsIgnoredPositionCount = 0;
+    _lastGpsAccuracy = null;
+    _lastGpsMovementMeters = null;
     _suppressNextGpsConnectedAudio = true;
 
-    await ensureGpsTracking();
+    await startGpsTracking();
   }
 
   Future<void> reconnectGpsTracking() async {
@@ -577,12 +640,16 @@ class AppProvider extends ChangeNotifier {
     _isGpsTracking = false;
     _gpsDistance = 0;
     _gpsUpdateCount = 0;
+    _gpsRawPositionCount = 0;
+    _gpsIgnoredPositionCount = 0;
+    _lastGpsAccuracy = null;
+    _lastGpsMovementMeters = null;
     _lastGpsPositionAt = null;
     _suppressNextGpsConnectedAudio = false;
     _statusMessage = 'Reconectando GPS...';
     notifyListeners();
 
-    await ensureGpsTracking();
+    await startGpsTracking();
   }
 
   void _startGpsWatchdog() {
@@ -592,7 +659,6 @@ class AppProvider extends ChangeNotifier {
 
       if (!_gps.isTracking) {
         _handleGpsStopped();
-        ensureGpsTracking();
         return;
       }
 
@@ -612,8 +678,14 @@ class AppProvider extends ChangeNotifier {
     if (!_isGpsTracking) return;
 
     _isGpsTracking = false;
-    _statusMessage = 'GPS parou - tentando reconectar...';
+    _statusMessage = _gpsStoppedByUser
+        ? 'GPS pausado pelo usuario'
+        : 'GPS parou - tentando iniciar novamente em alguns segundos';
     notifyListeners();
+
+    if (!_gpsStoppedByUser) {
+      _scheduleSmartGpsAutoStart(delay: const Duration(seconds: 12));
+    }
   }
 
   void _resetTripAlertState() {
@@ -723,6 +795,8 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> stopGpsTracking() async {
+    _gpsStoppedByUser = true;
+    _smartGpsStartTimer?.cancel();
     _gpsWatchdogTimer?.cancel();
     _gps.stopTracking();
 
@@ -750,6 +824,7 @@ class AppProvider extends ChangeNotifier {
     _gps.stopTracking();
     _isGpsTracking = false;
     _gpsWatchdogTimer?.cancel();
+    _smartGpsStartTimer?.cancel();
 
     await _db.updateTrip(_activeTrip!);
     await _db.endTrip(_activeTrip!.id!);
@@ -777,6 +852,7 @@ class AppProvider extends ChangeNotifier {
     _startupCareTimer?.cancel();
     _thirtyMinuteTripTimer?.cancel();
     _gpsWatchdogTimer?.cancel();
+    _smartGpsStartTimer?.cancel();
     _gps.dispose();
     _audio.dispose();
     super.dispose();

@@ -280,7 +280,16 @@ class _HomeScreenState extends State<HomeScreen> {
                   flex: 39,
                   child: _GpsStatusCard(
                     active: provider.isGpsTracking,
-                    onTap: provider.reconnectGpsTracking,
+                    statusMessage: provider.statusMessage,
+                    distanceMeters: provider.gpsDistance,
+                    updates: provider.gpsUpdateCount,
+                    rawPositions: provider.gpsRawPositionCount,
+                    ignoredPositions: provider.gpsIgnoredPositionCount,
+                    lastAccuracy: provider.lastGpsAccuracy,
+                    lastMovementMeters: provider.lastGpsMovementMeters,
+                    onTap: provider.isGpsTracking
+                        ? provider.stopGpsTracking
+                        : provider.startGpsTracking,
                   ),
                 ),
               ],
@@ -1522,10 +1531,24 @@ class _ActionCard extends StatelessWidget {
 class _GpsStatusCard extends StatelessWidget {
   const _GpsStatusCard({
     required this.active,
+    required this.statusMessage,
+    required this.distanceMeters,
+    required this.updates,
+    required this.rawPositions,
+    required this.ignoredPositions,
+    required this.lastAccuracy,
+    required this.lastMovementMeters,
     required this.onTap,
   });
 
   final bool active;
+  final String statusMessage;
+  final double distanceMeters;
+  final int updates;
+  final int rawPositions;
+  final int ignoredPositions;
+  final double? lastAccuracy;
+  final double? lastMovementMeters;
   final VoidCallback onTap;
 
   @override
@@ -1535,6 +1558,13 @@ class _GpsStatusCard extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final dense = constraints.maxHeight < 105 || constraints.maxWidth < 250;
+        final distanceKm = distanceMeters / 1000;
+        final accuracyText = lastAccuracy == null
+            ? 'sem sinal'
+            : 'prec. ${lastAccuracy!.toStringAsFixed(0)}m';
+        final movementText = lastMovementMeters == null
+            ? 'aguardando movimento'
+            : 'ult. ${lastMovementMeters!.toStringAsFixed(0)}m';
 
         return _Panel(
           padding: EdgeInsets.fromLTRB(
@@ -1550,7 +1580,7 @@ class _GpsStatusCard extends StatelessWidget {
                 children: [
                   Expanded(
                     child: Text(
-                      'GPS AUTOMATICO',
+                      'CONTROLE GPS',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -1560,8 +1590,10 @@ class _GpsStatusCard extends StatelessWidget {
                     ),
                   ),
                   Icon(
-                    Icons.refresh,
-                    color: _HomeScreenState._blue,
+                    active ? Icons.stop_circle_outlined : Icons.gps_fixed,
+                    color: active
+                        ? _HomeScreenState._green
+                        : _HomeScreenState._blue,
                     size: dense ? 14 : 20,
                   ),
                 ],
@@ -1598,7 +1630,7 @@ class _GpsStatusCard extends StatelessWidget {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  active ? 'GPS ATIVO' : 'RECONECTAR GPS',
+                                  active ? 'PARAR GPS' : 'INICIAR GPS',
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
                                     color: active
@@ -1612,12 +1644,37 @@ class _GpsStatusCard extends StatelessWidget {
                                   const SizedBox(height: 5),
                                   Text(
                                     active
-                                        ? 'Toque para forcar reconexao'
-                                        : 'Toque para ativar agora',
+                                        ? '${distanceKm.toStringAsFixed(2)} km GPS | $updates mov.'
+                                        : statusMessage.isEmpty
+                                            ? 'Toque para ativar quando estiver pronto'
+                                            : statusMessage,
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
                                       color: colors.primaryText,
                                       fontSize: 13,
+                                    ),
+                                  ),
+                                  if (active) ...[
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      statusMessage.isEmpty
+                                          ? '$rawPositions pos. | $ignoredPositions ign. | $accuracyText | $movementText'
+                                          : statusMessage,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: colors.secondaryText,
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                  ],
+                                ] else if (active) ...[
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    '${distanceKm.toStringAsFixed(2)}km',
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: colors.secondaryText,
+                                      fontSize: 9,
                                     ),
                                   ),
                                 ],
