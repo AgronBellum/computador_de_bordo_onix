@@ -13,7 +13,7 @@ class TripCard extends StatelessWidget {
 
   static const Color _panel = Color(0xFF071527);
   static const Color _panel2 = Color(0xFF0A1D34);
-  static const Color _blue = Color(0xFF1677FF);
+  static const Color _blue = Color(0xFF39D8B6);
   static const Color _green = Color(0xFF31E981);
 
   @override

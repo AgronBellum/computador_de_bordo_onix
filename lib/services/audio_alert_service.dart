@@ -48,7 +48,7 @@ class AudioAlertService {
       return _playRandom(['boa_tarde.mp3', 'boa_tarde1.mp3']);
     }
 
-    return _playRandom(['boa_noite.mp3', 'boa_noite1.mp3']);
+    return _playRandom(['boa_noite.mp3', 'boa_noite1.mp3', 'cuidado.mp3']);
   }
 
   Future<void> _playRandom(List<String> fileNames) {

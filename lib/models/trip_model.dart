@@ -13,6 +13,7 @@ class TripModel {
   bool isActive;
   double remainingFuel;
   double estimatedRange;
+  double fuelConsumedLiters;
   List<GpsPoint> gpsPoints;
 
   TripModel({
@@ -27,8 +28,13 @@ class TripModel {
     this.isActive = true,
     this.remainingFuel = 0,
     this.estimatedRange = 0,
+    double? fuelConsumedLiters,
     List<GpsPoint>? gpsPoints,
-  }) : gpsPoints = gpsPoints ?? [];
+  })  : fuelConsumedLiters =
+            (fuelConsumedLiters ?? (litersAdded - remainingFuel))
+                .clamp(0.0, litersAdded)
+                .toDouble(),
+        gpsPoints = gpsPoints ?? [];
 
   double get totalRange {
     if (consumptionPerKm <= 0) return 0;
@@ -42,9 +48,7 @@ class TripModel {
       return;
     }
 
-    final fuelConsumed = distanceTraveled / consumptionPerKm;
-
-    remainingFuel = litersAdded - fuelConsumed;
+    remainingFuel = litersAdded - fuelConsumedLiters;
 
     if (remainingFuel < 0) {
       remainingFuel = 0;
@@ -62,6 +66,7 @@ class TripModel {
       final delta = newOdometer - currentOdometer;
 
       distanceTraveled += delta;
+      _consumeForDistance(delta);
       currentOdometer = newOdometer;
 
       _recalculateFuel();
@@ -82,10 +87,18 @@ class TripModel {
       final delta = newOdometer - currentOdometer;
 
       distanceTraveled += delta;
+      _consumeForDistance(delta);
       currentOdometer = newOdometer;
 
       _recalculateFuel();
     }
+  }
+
+  void _consumeForDistance(double deltaKm) {
+    if (deltaKm <= 0 || consumptionPerKm <= 0) return;
+    fuelConsumedLiters += deltaKm / consumptionPerKm;
+    if (fuelConsumedLiters < 0) fuelConsumedLiters = 0;
+    if (fuelConsumedLiters > litersAdded) fuelConsumedLiters = litersAdded;
   }
 
   TripModel copyWith({
@@ -100,6 +113,7 @@ class TripModel {
     bool? isActive,
     double? remainingFuel,
     double? estimatedRange,
+    double? fuelConsumedLiters,
     List<GpsPoint>? gpsPoints,
   }) {
     return TripModel(
@@ -114,6 +128,7 @@ class TripModel {
       isActive: isActive ?? this.isActive,
       remainingFuel: remainingFuel ?? this.remainingFuel,
       estimatedRange: estimatedRange ?? this.estimatedRange,
+      fuelConsumedLiters: fuelConsumedLiters ?? this.fuelConsumedLiters,
       gpsPoints: gpsPoints ?? this.gpsPoints,
     );
   }
@@ -129,6 +144,8 @@ class TripModel {
     return copyWith(
       remainingFuel: safeLiters,
       estimatedRange: safeLiters * consumptionPerKm,
+      fuelConsumedLiters:
+          (litersAdded - safeLiters).clamp(0.0, litersAdded).toDouble(),
     );
   }
 
@@ -138,6 +155,8 @@ class TripModel {
     return copyWith(
       remainingFuel: liters,
       estimatedRange: safeRange,
+      fuelConsumedLiters:
+          (litersAdded - liters).clamp(0.0, litersAdded).toDouble(),
     );
   }
 
@@ -145,19 +164,29 @@ class TripModel {
     final safeDistance = odometer - initialOdometer;
     final updated = copyWith(
       currentOdometer: odometer,
-      distanceTraveled: safeDistance < 0 ? 0 : safeDistance,
     );
-    updated._recalculateFuel();
+    updated._applyManualDistance(safeDistance < 0 ? 0 : safeDistance);
     return updated;
+  }
+
+  void _applyManualDistance(double newDistanceKm) {
+    final delta = newDistanceKm - distanceTraveled;
+    distanceTraveled = newDistanceKm;
+    if (delta > 0) {
+      _consumeForDistance(delta);
+    } else if (delta < 0 && consumptionPerKm > 0) {
+      fuelConsumedLiters =
+          (newDistanceKm / consumptionPerKm).clamp(0.0, litersAdded).toDouble();
+    }
+    _recalculateFuel();
   }
 
   TripModel withDistanceTraveled(double distanceKm) {
     final safeDistance = distanceKm < 0 ? 0.0 : distanceKm;
     final updated = copyWith(
-      distanceTraveled: safeDistance,
       currentOdometer: initialOdometer + safeDistance,
     );
-    updated._recalculateFuel();
+    updated._applyManualDistance(safeDistance);
     return updated;
   }
 
@@ -174,6 +203,7 @@ class TripModel {
       'isActive': isActive ? 1 : 0,
       'remainingFuel': remainingFuel,
       'estimatedRange': estimatedRange,
+      'fuelConsumedLiters': fuelConsumedLiters,
     };
   }
 
@@ -192,6 +222,7 @@ class TripModel {
       isActive: map['isActive'] == 1,
       remainingFuel: (map['remainingFuel'] as num).toDouble(),
       estimatedRange: (map['estimatedRange'] as num).toDouble(),
+      fuelConsumedLiters: (map['fuelConsumedLiters'] as num?)?.toDouble(),
     );
   }
 }

@@ -22,8 +22,9 @@ class DatabaseService {
 
     return openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: _createDB,
+      onUpgrade: _upgradeDB,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -43,7 +44,8 @@ class DatabaseService {
         endedAt TEXT,
         isActive INTEGER NOT NULL DEFAULT 1,
         remainingFuel REAL NOT NULL DEFAULT 0,
-        estimatedRange REAL NOT NULL DEFAULT 0
+        estimatedRange REAL NOT NULL DEFAULT 0,
+        fuelConsumedLiters REAL NOT NULL DEFAULT 0
       )
     ''');
 
@@ -58,6 +60,23 @@ class DatabaseService {
         FOREIGN KEY (tripId) REFERENCES trips (id) ON DELETE CASCADE
       )
     ''');
+  }
+
+  Future<void> _upgradeDB(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      await db.execute(
+        'ALTER TABLE trips ADD COLUMN fuelConsumedLiters REAL NOT NULL DEFAULT 0',
+      );
+      await db.execute('''
+        UPDATE trips
+        SET fuelConsumedLiters =
+          CASE
+            WHEN litersAdded - remainingFuel < 0 THEN 0
+            WHEN litersAdded - remainingFuel > litersAdded THEN litersAdded
+            ELSE litersAdded - remainingFuel
+          END
+      ''');
+    }
   }
 
   Future<TripModel> createTrip(TripModel trip) async {
@@ -191,6 +210,7 @@ extension TripModelCopy on TripModel {
     bool? isActive,
     double? remainingFuel,
     double? estimatedRange,
+    double? fuelConsumedLiters,
     List<GpsPoint>? gpsPoints,
   }) {
     return TripModel(
@@ -205,6 +225,7 @@ extension TripModelCopy on TripModel {
       isActive: isActive ?? this.isActive,
       remainingFuel: remainingFuel ?? this.remainingFuel,
       estimatedRange: estimatedRange ?? this.estimatedRange,
+      fuelConsumedLiters: fuelConsumedLiters ?? this.fuelConsumedLiters,
       gpsPoints: gpsPoints ?? this.gpsPoints,
     );
   }

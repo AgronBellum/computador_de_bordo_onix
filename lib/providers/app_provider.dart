@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/offline_map.dart';
 import '../models/trip_model.dart';
 import '../services/audio_alert_service.dart';
 import '../services/database_service.dart';
@@ -34,6 +37,9 @@ class AppProvider extends ChangeNotifier {
   int _gpsIgnoredPositionCount = 0;
   double? _lastGpsAccuracy;
   double? _lastGpsMovementMeters;
+  double? _lastGpsLatitude;
+  double? _lastGpsLongitude;
+  double? _lastGpsHeading;
   Timer? _startupCareTimer;
   Timer? _thirtyMinuteTripTimer;
   Timer? _gpsWatchdogTimer;
@@ -45,6 +51,9 @@ class AppProvider extends ChangeNotifier {
   double _tankCapacityLiters = 0;
   String _drivingMode = 'city';
   String _vehicleName = 'ONIX';
+  String _mapVehicleIcon = 'arrow';
+  OfflineRoute? _activeNavigationRoute;
+  MapDestination? _activeNavigationDestination;
 
   double? _lastRemainingFuel;
   double? _lastOdometer;
@@ -63,12 +72,19 @@ class AppProvider extends ChangeNotifier {
   int get gpsIgnoredPositionCount => _gpsIgnoredPositionCount;
   double? get lastGpsAccuracy => _lastGpsAccuracy;
   double? get lastGpsMovementMeters => _lastGpsMovementMeters;
+  double? get lastGpsLatitude => _lastGpsLatitude;
+  double? get lastGpsLongitude => _lastGpsLongitude;
+  double? get lastGpsHeading => _lastGpsHeading;
   double get cityConsumption => _cityConsumption;
   double get tripConsumption => _tripConsumption;
   double get fuelPrice => _fuelPrice;
   double get tankCapacityLiters => _tankCapacityLiters;
   String get drivingMode => _drivingMode;
   String get vehicleName => _vehicleName;
+  String get mapVehicleIcon => _mapVehicleIcon;
+  OfflineRoute? get activeNavigationRoute => _activeNavigationRoute;
+  MapDestination? get activeNavigationDestination =>
+      _activeNavigationDestination;
   bool get isCityMode => _drivingMode == 'city';
   double get selectedConsumption =>
       isCityMode ? _cityConsumption : _tripConsumption;
@@ -125,6 +141,7 @@ class AppProvider extends ChangeNotifier {
     _audio.setEnabled(_soundsEnabled);
     _drivingMode = prefs.getString('driving_mode') ?? 'city';
     _vehicleName = prefs.getString('vehicle_name') ?? 'ONIX';
+    _mapVehicleIcon = prefs.getString('map_vehicle_icon') ?? 'arrow';
   }
 
   Future<void> saveDashboardSettings({
@@ -134,6 +151,7 @@ class AppProvider extends ChangeNotifier {
     required double tankCapacityLiters,
     required bool soundsEnabled,
     required String vehicleName,
+    required String mapVehicleIcon,
   }) async {
     _cityConsumption = cityConsumption;
     _tripConsumption = tripConsumption;
@@ -142,6 +160,7 @@ class AppProvider extends ChangeNotifier {
     _soundsEnabled = soundsEnabled;
     _audio.setEnabled(_soundsEnabled);
     _vehicleName = vehicleName.trim().isEmpty ? 'ONIX' : vehicleName.trim();
+    _mapVehicleIcon = mapVehicleIcon;
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble('city_consumption', _cityConsumption);
@@ -150,6 +169,7 @@ class AppProvider extends ChangeNotifier {
     await prefs.setDouble('tank_capacity_liters', _tankCapacityLiters);
     await prefs.setBool('sounds_enabled', _soundsEnabled);
     await prefs.setString('vehicle_name', _vehicleName);
+    await prefs.setString('map_vehicle_icon', _mapVehicleIcon);
 
     await applySelectedConsumption();
     await _audio.playSettingsSaved();
@@ -172,6 +192,26 @@ class AppProvider extends ChangeNotifier {
     } else {
       await _audio.playTripMode();
     }
+    notifyListeners();
+  }
+
+  void setActiveNavigationRoute({
+    required OfflineRoute route,
+    required MapDestination destination,
+  }) {
+    _activeNavigationRoute = route;
+    _activeNavigationDestination = destination;
+    notifyListeners();
+  }
+
+  void clearActiveNavigationRoute() {
+    if (_activeNavigationRoute == null &&
+        _activeNavigationDestination == null) {
+      return;
+    }
+
+    _activeNavigationRoute = null;
+    _activeNavigationDestination = null;
     notifyListeners();
   }
 
@@ -545,6 +585,9 @@ class AppProvider extends ChangeNotifier {
     _smartGpsAutoAttempts = 0;
     _lastGpsAccuracy = initialPos.accuracy;
     _lastGpsMovementMeters = null;
+    _lastGpsLatitude = initialPos.latitude;
+    _lastGpsLongitude = initialPos.longitude;
+    _lastGpsHeading = initialPos.heading >= 0 ? initialPos.heading : null;
     _lastGpsPositionAt = DateTime.now();
     _statusMessage = 'GPS ativo - sinal OK, rastreando...';
     _suppressNextGpsConnectedAudio = false;
@@ -559,7 +602,11 @@ class AppProvider extends ChangeNotifier {
       onPositionReceived: (position) {
         _gpsRawPositionCount++;
         _lastGpsAccuracy = position.accuracy;
+        _lastGpsHeading = _headingForPosition(position);
+        _lastGpsLatitude = position.latitude;
+        _lastGpsLongitude = position.longitude;
         _lastGpsPositionAt = DateTime.now();
+        _checkNavigationArrival(position.latitude, position.longitude);
         if (_gpsRawPositionCount == 1) {
           _statusMessage = 'GPS recebendo posicoes: $_gpsRawPositionCount';
           notifyListeners();
@@ -575,6 +622,9 @@ class AppProvider extends ChangeNotifier {
       onPositionIgnored: (position, reason) {
         _gpsIgnoredPositionCount++;
         _lastGpsAccuracy = position.accuracy;
+        _lastGpsHeading = _headingForPosition(position);
+        _lastGpsLatitude = position.latitude;
+        _lastGpsLongitude = position.longitude;
         _statusMessage = 'GPS ignorou ponto: $reason';
         notifyListeners();
       },
@@ -586,6 +636,16 @@ class AppProvider extends ChangeNotifier {
 
         _gpsDistance = distance;
         _gpsUpdateCount++;
+        _lastGpsHeading = _headingFromCoordinates(
+              _lastGpsLatitude,
+              _lastGpsLongitude,
+              lat,
+              lng,
+            ) ??
+            _lastGpsHeading;
+        _lastGpsLatitude = lat;
+        _lastGpsLongitude = lng;
+        _checkNavigationArrival(lat, lng);
 
         final deltaKm = deltaMeters / 1000;
         final newOdometer = _activeTrip!.currentOdometer + deltaKm;
@@ -628,6 +688,9 @@ class AppProvider extends ChangeNotifier {
     _gpsIgnoredPositionCount = 0;
     _lastGpsAccuracy = null;
     _lastGpsMovementMeters = null;
+    _lastGpsLatitude = null;
+    _lastGpsLongitude = null;
+    _lastGpsHeading = null;
     _suppressNextGpsConnectedAudio = true;
 
     await startGpsTracking();
@@ -644,12 +707,62 @@ class AppProvider extends ChangeNotifier {
     _gpsIgnoredPositionCount = 0;
     _lastGpsAccuracy = null;
     _lastGpsMovementMeters = null;
+    _lastGpsLatitude = null;
+    _lastGpsLongitude = null;
+    _lastGpsHeading = null;
     _lastGpsPositionAt = null;
     _suppressNextGpsConnectedAudio = false;
     _statusMessage = 'Reconectando GPS...';
     notifyListeners();
 
     await startGpsTracking();
+  }
+
+  double? _headingForPosition(Position position) {
+    if (position.heading >= 0) return position.heading;
+    return _headingFromCoordinates(
+      _lastGpsLatitude,
+      _lastGpsLongitude,
+      position.latitude,
+      position.longitude,
+    );
+  }
+
+  double? _headingFromCoordinates(
+    double? fromLat,
+    double? fromLon,
+    double toLat,
+    double toLon,
+  ) {
+    if (fromLat == null || fromLon == null) return null;
+    if (fromLat == toLat && fromLon == toLon) return null;
+
+    final lat1 = fromLat * math.pi / 180;
+    final lat2 = toLat * math.pi / 180;
+    final deltaLon = (toLon - fromLon) * math.pi / 180;
+    final y = math.sin(deltaLon) * math.cos(lat2);
+    final x = math.cos(lat1) * math.sin(lat2) -
+        math.sin(lat1) * math.cos(lat2) * math.cos(deltaLon);
+    final bearing = math.atan2(y, x) * 180 / math.pi;
+    return (bearing + 360) % 360;
+  }
+
+  void _checkNavigationArrival(double lat, double lon) {
+    final destination = _activeNavigationDestination;
+    if (destination == null || _activeNavigationRoute == null) return;
+
+    final meters = Geolocator.distanceBetween(
+      lat,
+      lon,
+      destination.position.dy,
+      destination.position.dx,
+    );
+    if (meters > 35) return;
+
+    _activeNavigationRoute = null;
+    _activeNavigationDestination = null;
+    _statusMessage = 'Destino alcancado';
+    notifyListeners();
   }
 
   void _startGpsWatchdog() {

@@ -1,11 +1,15 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../models/offline_map.dart';
 import '../models/trip_model.dart';
 import '../providers/app_provider.dart';
+import '../services/offline_map_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -16,8 +20,13 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _odometerController = TextEditingController();
+  final OfflineMapService _offlineMapService = OfflineMapService();
   Timer? _clockTimer;
   DateTime _now = DateTime.now();
+  Future<List<SavedMapPlace>>? _placesCacheFuture;
+  OfflineMapData? _cachedNavigationMap;
+  OfflineRouteCalculator? _cachedRouteCalculator;
+  List<SavedMapPlace> _cachedPlaces = const [];
 
   static const Color _bg = Color(0xFF020914);
   static const Color _bar = Color(0xFF050D19);
@@ -31,10 +40,27 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _placesCacheFuture = _warmPlacesCache();
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
       setState(() => _now = DateTime.now());
     });
+  }
+
+  Future<List<SavedMapPlace>> _warmPlacesCache() async {
+    final places = await _offlineMapService.loadPlaces();
+    _cachedPlaces = places;
+    return places;
+  }
+
+  Future<OfflineMapData> _loadNavigationMap() async {
+    final cached = _cachedNavigationMap;
+    if (cached != null) return cached;
+
+    final map = await _offlineMapService.loadCurrentMap();
+    _cachedNavigationMap = map;
+    _cachedRouteCalculator = OfflineRouteCalculator(map);
+    return map;
   }
 
   @override
@@ -104,198 +130,195 @@ class _HomeScreenState extends State<HomeScreen> {
         : const EdgeInsets.fromLTRB(18, 14, 18, 14);
     final availableHeight =
         math.max(180.0, constraints.maxHeight - padding.top - padding.bottom);
-    final topHeight = compact
-        ? availableHeight * 0.52
-        : (availableHeight * 0.52).clamp(240.0, 430.0);
-    final metricHeight = compact
-        ? availableHeight * 0.21
-        : (availableHeight * 0.18).clamp(104.0, 150.0);
-    final actionHeight = math.max(
-      compact ? 56.0 : 122.0,
-      availableHeight - topHeight - metricHeight - (gap * 2),
+    final cockpitWidth = compact ? 180.0 : 260.0;
+    final leftTopHeight = compact
+        ? availableHeight * 0.49
+        : (availableHeight * 0.5).clamp(230.0, 410.0);
+    final leftMetricHeight = compact
+        ? availableHeight * 0.2
+        : (availableHeight * 0.17).clamp(92.0, 132.0);
+    final leftActionHeight = math.max(
+      compact ? 56.0 : 106.0,
+      availableHeight - leftTopHeight - leftMetricHeight - (gap * 2),
     );
 
     return SingleChildScrollView(
       padding: padding,
-      child: Column(
-        children: [
-          SizedBox(
-            height: topHeight,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  flex: 26,
-                  child: _BigNumberCard(
-                    title: 'LITROS RESTANTES',
-                    value: _decimal(trip.remainingFuel, 1),
-                    unit: 'L',
-                    icon: Icons.local_gas_station,
-                    color: _blue,
-                    onTap: () => _showNumberEditDialog(
-                      context: context,
-                      title: 'Alterar litros restantes',
-                      currentValue: trip.remainingFuel,
-                      suffix: 'L',
-                      onSave: provider.setRemainingFuel,
+      child: SizedBox(
+        height: availableHeight,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: Column(
+                children: [
+                  SizedBox(
+                    height: leftTopHeight,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(
+                          flex: 27,
+                          child: _BigNumberCard(
+                            title: 'LITROS RESTANTES',
+                            value: _decimal(trip.remainingFuel, 1),
+                            unit: 'L',
+                            icon: Icons.local_gas_station,
+                            color: _blue,
+                            onTap: () => _showNumberEditDialog(
+                              context: context,
+                              title: 'Alterar litros restantes',
+                              currentValue: trip.remainingFuel,
+                              suffix: 'L',
+                              onSave: provider.setRemainingFuel,
+                            ),
+                          ),
+                        ),
+                        SizedBox(width: gap),
+                        Expanded(
+                          flex: 38,
+                          child: _FuelGaugeCard(
+                            percentage: provider.fuelPercentage,
+                            fuelName: 'GASOLINA',
+                          ),
+                        ),
+                        SizedBox(width: gap),
+                        Expanded(
+                          flex: 21,
+                          child: _BigNumberCard(
+                            title: 'AUTONOMIA',
+                            value: trip.estimatedRange.toStringAsFixed(0),
+                            unit: 'km',
+                            footer: 'Autonomia estimada',
+                            icon: Icons.local_gas_station,
+                            color: _blue,
+                            onTap: () => _showNumberEditDialog(
+                              context: context,
+                              title: 'Alterar autonomia',
+                              currentValue: trip.estimatedRange,
+                              suffix: 'km',
+                              digits: 0,
+                              onSave: provider.setEstimatedRange,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                ),
-                SizedBox(width: gap),
-                Expanded(
-                  flex: 34,
-                  child: _FuelGaugeCard(
-                    percentage: provider.fuelPercentage,
-                    fuelName: 'GASOLINA',
-                  ),
-                ),
-                SizedBox(width: gap),
-                Expanded(
-                  flex: 19,
-                  child: _BigNumberCard(
-                    title: 'AUTONOMIA',
-                    value: trip.estimatedRange.toStringAsFixed(0),
-                    unit: 'km',
-                    footer: 'Autonomia estimada',
-                    icon: Icons.local_gas_station,
-                    color: _blue,
-                    onTap: () => _showNumberEditDialog(
-                      context: context,
-                      title: 'Alterar autonomia',
-                      currentValue: trip.estimatedRange,
-                      suffix: 'km',
-                      digits: 0,
-                      onSave: provider.setEstimatedRange,
+                  SizedBox(height: gap),
+                  SizedBox(
+                    height: leftMetricHeight,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: _MetricCard(
+                            icon: Icons.route,
+                            title: 'KM ATUAL',
+                            value: trip.currentOdometer.floor().toString(),
+                            unit: 'km',
+                            onTap: () => _showNumberEditDialog(
+                              context: context,
+                              title: 'Alterar KM atual',
+                              currentValue: trip.currentOdometer,
+                              suffix: 'km',
+                              digits: 0,
+                              onSave: provider.setCurrentOdometer,
+                            ),
+                          ),
+                        ),
+                        SizedBox(width: gap),
+                        Expanded(
+                          child: _MetricCard(
+                            icon: Icons.route,
+                            title: 'KM PERCORRIDO',
+                            value: _decimal(trip.distanceTraveled, 1),
+                            unit: 'km',
+                            onTap: () => _showNumberEditDialog(
+                              context: context,
+                              title: 'Alterar KM percorrido',
+                              currentValue: trip.distanceTraveled,
+                              suffix: 'km',
+                              onSave: provider.setDistanceTraveled,
+                            ),
+                          ),
+                        ),
+                        SizedBox(width: gap),
+                        Expanded(
+                          child: _MetricCard(
+                            icon: Icons.bar_chart,
+                            title: 'CONSUMO MEDIO GERAL',
+                            value: _decimal(trip.consumptionPerKm, 1),
+                            unit: 'km/L',
+                            onTap: () => _showNumberEditDialog(
+                              context: context,
+                              title: 'Alterar consumo medio',
+                              currentValue: trip.consumptionPerKm,
+                              suffix: 'km/L',
+                              onSave: provider.setConsumption,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                ),
-                SizedBox(width: gap),
-                Expanded(
-                  flex: 18,
-                  child: _TripPanel(
-                    distance: _decimal(trip.distanceTraveled, 1),
-                    duration: _formatDuration(
-                      DateTime.now().difference(trip.createdAt),
+                  SizedBox(height: gap),
+                  SizedBox(
+                    height: leftActionHeight,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          flex: 27,
+                          child: _ActionCard(
+                            icon: Icons.local_gas_station,
+                            title: 'ABASTECER',
+                            subtitle: 'Registrar abastecimento',
+                            color: _green,
+                            onTap: () =>
+                                Navigator.pushNamed(context, '/addFuel'),
+                          ),
+                        ),
+                        SizedBox(width: gap),
+                        Expanded(
+                          flex: 34,
+                          child: _NavigationRouteCard(
+                            instruction: _dashboardRouteInstruction(provider),
+                            destination:
+                                provider.activeNavigationDestination?.name,
+                            hasRoute: provider.activeNavigationRoute != null,
+                            onTap: () =>
+                                _showNavigationRouteDialog(context, provider),
+                            onFavoritesTap: () =>
+                                _showNavigationRouteDialog(context, provider),
+                          ),
+                        ),
+                        SizedBox(width: gap),
+                        Expanded(
+                          flex: 19,
+                          child: _CompactCostCard(
+                            value: _estimatedCostValue(provider, trip),
+                          ),
+                        ),
+                      ],
                     ),
-                    consumption: _decimal(trip.consumptionPerKm, 1),
-                    cost: _estimatedCostValue(provider, trip),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          SizedBox(height: gap),
-          SizedBox(
-            height: metricHeight,
-            child: Row(
-              children: [
-                Expanded(
-                  child: _MetricCard(
-                    icon: Icons.route,
-                    title: 'KM ATUAL',
-                    value: trip.currentOdometer.floor().toString(),
-                    unit: 'km',
-                    onTap: () => _showNumberEditDialog(
-                      context: context,
-                      title: 'Alterar KM atual',
-                      currentValue: trip.currentOdometer,
-                      suffix: 'km',
-                      digits: 0,
-                      onSave: provider.setCurrentOdometer,
-                    ),
-                  ),
-                ),
-                SizedBox(width: gap),
-                Expanded(
-                  child: _MetricCard(
-                    icon: Icons.route,
-                    title: 'KM PERCORRIDO',
-                    value: _decimal(trip.distanceTraveled, 1),
-                    unit: 'km',
-                    onTap: () => _showNumberEditDialog(
-                      context: context,
-                      title: 'Alterar KM percorrido',
-                      currentValue: trip.distanceTraveled,
-                      suffix: 'km',
-                      onSave: provider.setDistanceTraveled,
-                    ),
-                  ),
-                ),
-                SizedBox(width: gap),
-                Expanded(
-                  child: _MetricCard(
-                    icon: Icons.bar_chart,
-                    title: 'CONSUMO MEDIO GERAL',
-                    value: _decimal(trip.consumptionPerKm, 1),
-                    unit: 'km/L',
-                    onTap: () => _showNumberEditDialog(
-                      context: context,
-                      title: 'Alterar consumo medio',
-                      currentValue: trip.consumptionPerKm,
-                      suffix: 'km/L',
-                      onSave: provider.setConsumption,
-                    ),
-                  ),
-                ),
-                SizedBox(width: gap),
-                Expanded(
-                  child: _MetricCard(
-                    icon: Icons.attach_money,
-                    title: 'CUSTO ESTIMADO',
-                    value: _estimatedCostValue(provider, trip),
-                    unit: '',
-                  ),
-                ),
-              ],
+            SizedBox(width: gap),
+            SizedBox(
+              width: cockpitWidth,
+              child: _PelotasOfflineMapCard(
+                latitude: provider.lastGpsLatitude,
+                longitude: provider.lastGpsLongitude,
+                heading: provider.lastGpsHeading,
+                active: provider.isGpsTracking,
+                vehicleIcon: provider.mapVehicleIcon,
+                route: provider.activeNavigationRoute,
+                onTap: () => Navigator.pushNamed(context, '/offlineMap'),
+              ),
             ),
-          ),
-          SizedBox(height: gap),
-          SizedBox(
-            height: actionHeight,
-            child: Row(
-              children: [
-                Expanded(
-                  flex: 27,
-                  child: _ActionCard(
-                    icon: Icons.local_gas_station,
-                    title: 'ABASTECER',
-                    subtitle: 'Registrar abastecimento',
-                    color: _green,
-                    onTap: () => Navigator.pushNamed(context, '/addFuel'),
-                  ),
-                ),
-                SizedBox(width: gap),
-                Expanded(
-                  flex: 29,
-                  child: _ActionCard(
-                    icon: Icons.route,
-                    title: 'KM MANUAL',
-                    subtitle: 'Registrar km manualmente',
-                    color: _blue,
-                    onTap: () => _showManualKmDialog(context, provider),
-                  ),
-                ),
-                SizedBox(width: gap),
-                Expanded(
-                  flex: 39,
-                  child: _GpsStatusCard(
-                    active: provider.isGpsTracking,
-                    statusMessage: provider.statusMessage,
-                    distanceMeters: provider.gpsDistance,
-                    updates: provider.gpsUpdateCount,
-                    rawPositions: provider.gpsRawPositionCount,
-                    ignoredPositions: provider.gpsIgnoredPositionCount,
-                    lastAccuracy: provider.lastGpsAccuracy,
-                    lastMovementMeters: provider.lastGpsMovementMeters,
-                    onTap: provider.isGpsTracking
-                        ? provider.stopGpsTracking
-                        : provider.startGpsTracking,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -378,6 +401,14 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
               ],
             ),
+          ),
+          SizedBox(width: compactHeader ? 8 : 12),
+          _HeaderGpsButton(
+            active: provider.isGpsTracking,
+            onTap: provider.isGpsTracking
+                ? provider.stopGpsTracking
+                : provider.startGpsTracking,
+            compact: compactHeader,
           ),
           if (!compactHeader) const Spacer(),
           InkWell(
@@ -565,6 +596,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // ignore: unused_element
   void _showManualKmDialog(BuildContext context, AppProvider provider) {
     _odometerController.text = '';
 
@@ -677,6 +709,7 @@ class _HomeScreenState extends State<HomeScreen> {
           : '',
     );
     var soundsEnabled = provider.soundsEnabled;
+    var mapVehicleIcon = provider.mapVehicleIcon;
 
     showDialog(
       context: context,
@@ -830,6 +863,48 @@ class _HomeScreenState extends State<HomeScreen> {
                                 secondary: const Icon(Icons.volume_up),
                                 title: const Text('Sons e alertas'),
                               ),
+                              const SizedBox(height: 8),
+                              DropdownButtonFormField<String>(
+                                initialValue: mapVehicleIcon,
+                                decoration: const InputDecoration(
+                                  labelText: 'Icone do mapa',
+                                  prefixIcon: Icon(Icons.navigation),
+                                ),
+                                items: const [
+                                  DropdownMenuItem(
+                                    value: 'arrow',
+                                    child: Text('Flecha eletrica'),
+                                  ),
+                                  DropdownMenuItem(
+                                    value: 'shuttle',
+                                    child: Text('Nave urbana'),
+                                  ),
+                                  DropdownMenuItem(
+                                    value: 'bolt',
+                                    child: Text('Raio'),
+                                  ),
+                                  DropdownMenuItem(
+                                    value: 'diamond',
+                                    child: Text('Cristal'),
+                                  ),
+                                ],
+                                onChanged: (value) {
+                                  if (value == null) return;
+                                  setDialogState(() {
+                                    mapVehicleIcon = value;
+                                  });
+                                },
+                              ),
+                              const SizedBox(height: 8),
+                              SizedBox(
+                                width: double.infinity,
+                                child: OutlinedButton.icon(
+                                  onPressed: () =>
+                                      _showMapDownloadDialog(context),
+                                  icon: const Icon(Icons.map),
+                                  label: const Text('MAPAS OFFLINE'),
+                                ),
+                              ),
                             ],
                           ),
                         );
@@ -884,6 +959,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             tankCapacityLiters: tank,
                             soundsEnabled: soundsEnabled,
                             vehicleName: vehicleController.text,
+                            mapVehicleIcon: mapVehicleIcon,
                           );
 
                           if (dialogContext.mounted) {
@@ -903,16 +979,626 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _showMapDownloadDialog(BuildContext context) {
+    final service = OfflineMapService();
+    final countryController = TextEditingController(text: 'Brasil');
+    List<DownloadedOfflineMap> downloadedMaps = [];
+    List<MapSearchOption> countries = [];
+    List<MapSearchOption> states = [];
+    List<MapSearchOption> cities = [];
+    MapSearchOption? selectedCountry;
+    MapSearchOption? selectedState;
+    MapSearchOption? selectedCity;
+    var busy = false;
+    String? message;
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        Future<void> refreshMaps(StateSetter setDialogState) async {
+          final maps = await service.downloadedMaps();
+          if (!dialogContext.mounted) return;
+          setDialogState(() => downloadedMaps = maps);
+        }
+
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            if (downloadedMaps.isEmpty && !busy) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (dialogContext.mounted) refreshMaps(setDialogState);
+              });
+            }
+
+            return AlertDialog(
+              title: const Text('Mapas offline'),
+              content: SizedBox(
+                width: 520,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Baixados',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurface,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      if (downloadedMaps.isEmpty)
+                        const LinearProgressIndicator()
+                      else
+                        ...downloadedMaps.map(
+                          (map) => ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            leading: Icon(
+                              map.active
+                                  ? Icons.radio_button_checked
+                                  : Icons.map,
+                              color: map.active
+                                  ? _HomeScreenState._green
+                                  : _HomeScreenState._blue,
+                            ),
+                            title: Text(map.name),
+                            trailing: map.active
+                                ? const Text('ATIVO')
+                                : const Text('USAR'),
+                            onTap: map.active || busy
+                                ? null
+                                : () async {
+                                    await service.setCurrentMap(map.path);
+                                    await refreshMaps(setDialogState);
+                                    setDialogState(() {
+                                      message =
+                                          '${map.name} definido como mapa ativo.';
+                                    });
+                                  },
+                          ),
+                        ),
+                      const Divider(height: 24),
+                      TextField(
+                        controller: countryController,
+                        enabled: !busy,
+                        decoration: const InputDecoration(
+                          labelText: 'Pais',
+                          hintText: 'Brasil, Argentina, Uruguai...',
+                          prefixIcon: Icon(Icons.public),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: busy
+                              ? null
+                              : () async {
+                                  setDialogState(() {
+                                    busy = true;
+                                    message = 'Buscando pais...';
+                                  });
+                                  try {
+                                    final result =
+                                        await service.searchCountries(
+                                            countryController.text);
+                                    setDialogState(() {
+                                      countries = result;
+                                      selectedCountry = result.isNotEmpty
+                                          ? result.first
+                                          : null;
+                                      states = [];
+                                      cities = [];
+                                      selectedState = null;
+                                      selectedCity = null;
+                                      busy = false;
+                                      message = result.isEmpty
+                                          ? 'Nenhum pais encontrado.'
+                                          : 'Escolha o pais.';
+                                    });
+                                  } catch (_) {
+                                    setDialogState(() {
+                                      busy = false;
+                                      message = 'Falha ao buscar pais.';
+                                    });
+                                  }
+                                },
+                          icon: const Icon(Icons.search),
+                          label: const Text('BUSCAR PAIS'),
+                        ),
+                      ),
+                      if (countries.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        DropdownButtonFormField<MapSearchOption>(
+                          initialValue: selectedCountry,
+                          decoration: const InputDecoration(labelText: 'Pais'),
+                          items: countries
+                              .map(
+                                (option) => DropdownMenuItem(
+                                  value: option,
+                                  child: Text(option.name),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: busy
+                              ? null
+                              : (value) {
+                                  setDialogState(() {
+                                    selectedCountry = value;
+                                    states = [];
+                                    cities = [];
+                                    selectedState = null;
+                                    selectedCity = null;
+                                  });
+                                },
+                        ),
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: busy || selectedCountry == null
+                                ? null
+                                : () async {
+                                    setDialogState(() {
+                                      busy = true;
+                                      message = 'Buscando estados...';
+                                    });
+                                    try {
+                                      final result = await service
+                                          .searchStates(selectedCountry!);
+                                      setDialogState(() {
+                                        states = result;
+                                        selectedState = result.isNotEmpty
+                                            ? result.first
+                                            : null;
+                                        cities = [];
+                                        selectedCity = null;
+                                        busy = false;
+                                        message = result.isEmpty
+                                            ? 'Nenhum estado encontrado.'
+                                            : 'Escolha o estado.';
+                                      });
+                                    } catch (_) {
+                                      setDialogState(() {
+                                        busy = false;
+                                        message = 'Falha ao buscar estados.';
+                                      });
+                                    }
+                                  },
+                            icon: const Icon(Icons.account_balance),
+                            label: const Text('BUSCAR ESTADOS'),
+                          ),
+                        ),
+                      ],
+                      if (states.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        DropdownButtonFormField<MapSearchOption>(
+                          initialValue: selectedState,
+                          decoration:
+                              const InputDecoration(labelText: 'Estado'),
+                          items: states
+                              .map(
+                                (option) => DropdownMenuItem(
+                                  value: option,
+                                  child: Text(option.name),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: busy
+                              ? null
+                              : (value) {
+                                  setDialogState(() {
+                                    selectedState = value;
+                                    cities = [];
+                                    selectedCity = null;
+                                  });
+                                },
+                        ),
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: busy ||
+                                    selectedCountry == null ||
+                                    selectedState == null
+                                ? null
+                                : () async {
+                                    setDialogState(() {
+                                      busy = true;
+                                      message = 'Buscando cidades...';
+                                    });
+                                    try {
+                                      final result = await service.searchCities(
+                                        country: selectedCountry!,
+                                        state: selectedState!,
+                                      );
+                                      setDialogState(() {
+                                        cities = result;
+                                        selectedCity = result.isNotEmpty
+                                            ? result.first
+                                            : null;
+                                        busy = false;
+                                        message = result.isEmpty
+                                            ? 'Nenhuma cidade encontrada.'
+                                            : 'Escolha a cidade.';
+                                      });
+                                    } catch (_) {
+                                      setDialogState(() {
+                                        busy = false;
+                                        message = 'Falha ao buscar cidades.';
+                                      });
+                                    }
+                                  },
+                            icon: const Icon(Icons.location_city),
+                            label: const Text('BUSCAR CIDADES'),
+                          ),
+                        ),
+                      ],
+                      if (cities.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        DropdownButtonFormField<MapSearchOption>(
+                          initialValue: selectedCity,
+                          decoration:
+                              const InputDecoration(labelText: 'Cidade'),
+                          items: cities
+                              .map(
+                                (option) => DropdownMenuItem(
+                                  value: option,
+                                  child: Text(option.name),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: busy
+                              ? null
+                              : (value) {
+                                  setDialogState(() {
+                                    selectedCity = value;
+                                  });
+                                },
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+                      if (busy) const LinearProgressIndicator(),
+                      if (message != null) ...[
+                        const SizedBox(height: 10),
+                        Text(message!),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: busy ? null : () => Navigator.pop(dialogContext),
+                  child: const Text('FECHAR'),
+                ),
+                ElevatedButton(
+                  onPressed: busy || selectedCity == null
+                      ? null
+                      : () async {
+                          setDialogState(() {
+                            busy = true;
+                            message = 'Baixando ruas e postos...';
+                          });
+
+                          try {
+                            final map = await service
+                                .downloadCityMap(selectedCity!.displayName);
+                            await refreshMaps(setDialogState);
+                            if (!dialogContext.mounted) return;
+                            setDialogState(() {
+                              busy = false;
+                              message =
+                                  '${map.name} salvo e definido como mapa ativo.';
+                            });
+                          } catch (_) {
+                            if (!dialogContext.mounted) return;
+                            setDialogState(() {
+                              busy = false;
+                              message =
+                                  'Nao foi possivel baixar. Verifique a internet e tente novamente.';
+                            });
+                          }
+                        },
+                  child: const Text('BAIXAR'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    ).then((_) => countryController.dispose());
+  }
+
+  _DashboardInstruction? _dashboardRouteInstruction(AppProvider provider) {
+    final route = provider.activeNavigationRoute;
+    final lat = provider.lastGpsLatitude;
+    final lon = provider.lastGpsLongitude;
+    if (route == null ||
+        lat == null ||
+        lon == null ||
+        route.points.length < 3) {
+      return null;
+    }
+
+    final origin = Offset(lon, lat);
+    var nearestIndex = 0;
+    var nearestMeters = double.infinity;
+    for (var i = 0; i < route.points.length; i++) {
+      final meters = _distanceMeters(origin, route.points[i]);
+      if (meters < nearestMeters) {
+        nearestMeters = meters;
+        nearestIndex = i;
+      }
+    }
+
+    final lookAheadIndex = math.min(nearestIndex + 3, route.points.length - 1);
+    final maneuverIndex = math.min(nearestIndex + 8, route.points.length - 1);
+    if (lookAheadIndex <= nearestIndex) return null;
+
+    final bearingNow = _bearingDegrees(origin, route.points[lookAheadIndex]);
+    var text = 'Siga em frente';
+    var icon = Icons.straight;
+
+    if (maneuverIndex > lookAheadIndex) {
+      final bearingNext = _bearingDegrees(
+        route.points[lookAheadIndex],
+        route.points[maneuverIndex],
+      );
+      final delta = _angleDelta(bearingNow, bearingNext);
+      if (delta > 35) {
+        text = 'Vire a direita';
+        icon = Icons.turn_right;
+      } else if (delta < -35) {
+        text = 'Vire a esquerda';
+        icon = Icons.turn_left;
+      }
+    }
+
+    var metersAhead = 0.0;
+    var previous = origin;
+    for (var i = nearestIndex; i <= maneuverIndex; i++) {
+      metersAhead += _distanceMeters(previous, route.points[i]);
+      previous = route.points[i];
+    }
+
+    return _DashboardInstruction(
+      icon: icon,
+      title: text,
+      detail: '${metersAhead.clamp(0, 999).toStringAsFixed(0)} m',
+    );
+  }
+
+  Future<void> _showNavigationRouteDialog(
+    BuildContext context,
+    AppProvider provider,
+  ) async {
+    var loading = _cachedPlaces.isEmpty;
+    var routing = false;
+    String? message;
+    List<SavedMapPlace> places = List<SavedMapPlace>.of(_cachedPlaces);
+    OfflineRouteCalculator? calculator = _cachedRouteCalculator;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        Future<void> load(StateSetter setDialogState) async {
+          try {
+            final loadedPlaces =
+                await (_placesCacheFuture ??= _warmPlacesCache());
+            if (!dialogContext.mounted) return;
+            setDialogState(() {
+              places = loadedPlaces;
+              loading = false;
+            });
+          } catch (_) {
+            if (!dialogContext.mounted) return;
+            setDialogState(() {
+              loading = false;
+              message = 'Nao foi possivel carregar favoritos.';
+            });
+          }
+        }
+
+        Future<void> selectPlace(
+          StateSetter setDialogState,
+          SavedMapPlace place,
+        ) async {
+          final lat = provider.lastGpsLatitude;
+          final lon = provider.lastGpsLongitude;
+          if (lat == null || lon == null) {
+            setDialogState(() {
+              message = 'Aguardando GPS para calcular rota.';
+            });
+            return;
+          }
+
+          setDialogState(() {
+            routing = true;
+            message = 'Calculando rota...';
+          });
+
+          late final OfflineMapData currentMap;
+          try {
+            currentMap = await _loadNavigationMap();
+          } catch (_) {
+            if (!dialogContext.mounted) return;
+            setDialogState(() {
+              routing = false;
+              message = 'Nao foi possivel carregar o mapa offline.';
+            });
+            return;
+          }
+
+          final destination = MapDestination(
+            name: place.name,
+            position: place.position,
+            kind: place.type,
+          );
+          calculator ??= OfflineRouteCalculator(currentMap);
+          _cachedRouteCalculator ??= calculator;
+          final route = await Future<OfflineRoute?>(
+            () => calculator!.calculate(
+              Offset(lon, lat),
+              place.position,
+            ),
+          );
+
+          if (!dialogContext.mounted) return;
+          setDialogState(() {
+            routing = false;
+            message = route == null
+                ? 'Rota indisponivel neste mapa offline.'
+                : 'Rota para ${place.name} ativa.';
+          });
+
+          if (route != null) {
+            provider.setActiveNavigationRoute(
+              route: route,
+              destination: destination,
+            );
+          }
+        }
+
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            if (loading && places.isEmpty) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (dialogContext.mounted) load(setDialogState);
+              });
+            }
+
+            final instruction = _dashboardRouteInstruction(provider);
+            return AlertDialog(
+              title: const Text('Navegacao'),
+              content: SizedBox(
+                width: 520,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (provider.activeNavigationRoute != null) ...[
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(
+                          instruction?.icon ?? Icons.route,
+                          color: _blue,
+                          size: 32,
+                        ),
+                        title: Text(
+                          instruction?.title ?? 'Rota ativa',
+                          style: const TextStyle(fontWeight: FontWeight.w900),
+                        ),
+                        subtitle: Text(
+                          instruction?.detail ??
+                              provider.activeNavigationDestination?.name ??
+                              'Destino selecionado',
+                        ),
+                        trailing: IconButton(
+                          tooltip: 'Limpar rota',
+                          onPressed: provider.clearActiveNavigationRoute,
+                          icon: const Icon(Icons.close),
+                        ),
+                      ),
+                      const Divider(),
+                    ],
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'Favoritos salvos',
+                            style: TextStyle(fontWeight: FontWeight.w900),
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: () =>
+                              Navigator.pushNamed(context, '/offlineMap'),
+                          icon: const Icon(Icons.map),
+                          label: const Text('MAPA'),
+                        ),
+                      ],
+                    ),
+                    if (loading || routing) const LinearProgressIndicator(),
+                    if (!loading && places.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 12),
+                        child: Text('Nenhum favorito salvo ainda.'),
+                      )
+                    else
+                      Flexible(
+                        child: ListView.separated(
+                          shrinkWrap: true,
+                          itemCount: places.length,
+                          separatorBuilder: (_, __) => const Divider(height: 1),
+                          itemBuilder: (context, index) {
+                            final place = places[index];
+                            return ListTile(
+                              dense: true,
+                              leading:
+                                  Icon(_placeIcon(place.type), color: _blue),
+                              title: Text(place.name),
+                              subtitle: Text(_placeTypeLabel(place.type)),
+                              onTap: routing
+                                  ? null
+                                  : () => selectPlace(setDialogState, place),
+                            );
+                          },
+                        ),
+                      ),
+                    if (message != null) ...[
+                      const SizedBox(height: 10),
+                      Text(message!),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('FECHAR'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  IconData _placeIcon(String type) {
+    switch (type) {
+      case 'casa':
+        return Icons.home;
+      case 'trabalho':
+        return Icons.work;
+      case 'posto':
+        return Icons.local_gas_station;
+      case 'mercado':
+        return Icons.storefront;
+      default:
+        return Icons.star;
+    }
+  }
+
+  String _placeTypeLabel(String type) {
+    switch (type) {
+      case 'casa':
+        return 'Casa';
+      case 'trabalho':
+        return 'Trabalho';
+      case 'posto':
+        return 'Posto';
+      case 'mercado':
+        return 'Super Mercado';
+      default:
+        return 'Favorito';
+    }
+  }
+
   String _formatTime(DateTime date) {
     final h = date.hour.toString().padLeft(2, '0');
     final m = date.minute.toString().padLeft(2, '0');
     return '$h:$m';
-  }
-
-  String _formatDuration(Duration duration) {
-    final h = duration.inHours.toString().padLeft(2, '0');
-    final m = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
-    return '$h:$m h';
   }
 
   String _decimal(double value, int digits) {
@@ -924,10 +1610,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   double _estimatedCostAmount(double fuelPrice, TripModel trip) {
-    final consumed = math.max<double>(
-      0.0,
-      trip.litersAdded - trip.remainingFuel,
-    );
+    final consumed = math.max<double>(0.0, trip.fuelConsumedLiters);
     return consumed * fuelPrice;
   }
 
@@ -1208,6 +1891,1471 @@ class _FuelGaugeCard extends StatelessWidget {
   }
 }
 
+class _CockpitRouteInfo {
+  const _CockpitRouteInfo({
+    required this.localPath,
+    required this.title,
+    required this.subtitle,
+    required this.distanceLabel,
+    required this.icon,
+    required this.turnColor,
+    required this.hasRoute,
+  });
+
+  final List<Offset> localPath;
+  final String title;
+  final String subtitle;
+  final String distanceLabel;
+  final IconData icon;
+  final Color turnColor;
+  final bool hasRoute;
+
+  factory _CockpitRouteInfo.fromRoute({
+    required OfflineRoute? route,
+    required double? latitude,
+    required double? longitude,
+    required double? heading,
+    _PelotasMapData? mapData,
+  }) {
+    final origin = latitude == null || longitude == null
+        ? null
+        : Offset(longitude, latitude);
+    final points = route?.points;
+    if (origin == null || points == null || points.length < 2) {
+      if (origin != null && mapData != null) {
+        final matched = _CockpitRoadMatcher.match(
+          mapData: mapData,
+          origin: origin,
+          heading: heading,
+        );
+        if (matched != null && matched.points.length >= 3) {
+          final roadHeading = _responsiveHeading(
+            mapHeading: matched.heading,
+            gpsHeading: heading,
+          );
+          final localPath = _routeToLocalPath(
+            origin: origin,
+            heading: roadHeading,
+            points: matched.points,
+          );
+          final instruction = _instructionFromLocalPath(localPath);
+          return _CockpitRouteInfo(
+            localPath: localPath,
+            title: instruction.title,
+            subtitle: matched.roadName,
+            distanceLabel: 'VIA',
+            icon: instruction.icon,
+            turnColor: instruction.color,
+            hasRoute: false,
+          );
+        }
+      }
+
+      final curve =
+          heading == null ? 0.0 : math.sin(heading * math.pi / 135) * 18;
+      return _CockpitRouteInfo(
+        localPath: [
+          const Offset(0, 0),
+          Offset(curve * 0.12, 30),
+          Offset(curve * 0.32, 66),
+          Offset(curve * 0.62, 112),
+          Offset(curve, 162),
+        ],
+        title: 'Siga em frente',
+        subtitle: 'Aguardando rota ativa',
+        distanceLabel: '-- m',
+        icon: Icons.straight,
+        turnColor: _HomeScreenState._blue,
+        hasRoute: false,
+      );
+    }
+
+    final routeMatch = _CockpitRouteMatcher.match(
+      points: points,
+      origin: origin,
+      heading: heading,
+    );
+    final nearestIndex = routeMatch?.nearestIndex ?? 0;
+    final firstAheadIndex = math.min(nearestIndex + 2, points.length - 1);
+    final lookAheadIndex = math.min(nearestIndex + 6, points.length - 1);
+    final maneuverIndex = math.min(nearestIndex + 12, points.length - 1);
+    final mapHeading = routeMatch?.heading ??
+        _bearingDegrees(
+          origin,
+          points[firstAheadIndex],
+        );
+    final routeHeading = _responsiveHeading(
+      mapHeading: mapHeading,
+      gpsHeading: heading,
+    );
+    final localPath = _routeToLocalPath(
+      origin: origin,
+      heading: routeHeading,
+      points: routeMatch?.points ?? points.skip(nearestIndex).take(22).toList(),
+    );
+    final cockpitPath = _shapeUpcomingTurn(
+      localPath,
+      cue: routeMatch == null
+          ? null
+          : _CockpitTurnCue.fromRoutePoints(routeMatch.points),
+    );
+
+    final instruction = _routeInstruction(
+      origin: origin,
+      points: points,
+      lookAheadIndex: lookAheadIndex,
+      maneuverIndex: maneuverIndex,
+      fallbackPath: cockpitPath,
+    );
+
+    var metersAhead = 0.0;
+    var previous = origin;
+    for (var i = nearestIndex; i <= maneuverIndex; i++) {
+      metersAhead += _distanceMeters(previous, points[i]);
+      previous = points[i];
+    }
+
+    final metersLabel = '${metersAhead.clamp(0, 999).toStringAsFixed(0)} m';
+    return _CockpitRouteInfo(
+      localPath: cockpitPath,
+      title: instruction.title,
+      subtitle: route == null ? 'Sem rota ativa' : 'Rota ativa no painel',
+      distanceLabel: metersLabel,
+      icon: instruction.icon,
+      turnColor: instruction.color,
+      hasRoute: true,
+    );
+  }
+
+  static double _responsiveHeading({
+    required double mapHeading,
+    required double? gpsHeading,
+  }) {
+    if (gpsHeading == null) return mapHeading;
+    final delta = _angleDelta(mapHeading, gpsHeading);
+    if (delta.abs() > 95) return mapHeading;
+    return (mapHeading + delta * 0.62 + 360) % 360;
+  }
+
+  static _CockpitInstruction _routeInstruction({
+    required Offset origin,
+    required List<Offset> points,
+    required int lookAheadIndex,
+    required int maneuverIndex,
+    required List<Offset> fallbackPath,
+  }) {
+    if (maneuverIndex > lookAheadIndex) {
+      final bearingNow = _bearingDegrees(origin, points[lookAheadIndex]);
+      final bearingNext =
+          _bearingDegrees(points[lookAheadIndex], points[maneuverIndex]);
+      final delta = _angleDelta(bearingNow, bearingNext);
+      if (delta > 32) {
+        return const _CockpitInstruction(
+          title: 'Vire a direita',
+          icon: Icons.turn_right,
+          color: Color(0xFF39D8B6),
+        );
+      }
+      if (delta < -32) {
+        return const _CockpitInstruction(
+          title: 'Vire a esquerda',
+          icon: Icons.turn_left,
+          color: Color(0xFF39D8B6),
+        );
+      }
+      if (delta.abs() > 16) {
+        return _CockpitInstruction(
+          title: delta > 0 ? 'Curva a direita' : 'Curva a esquerda',
+          icon: delta > 0 ? Icons.turn_slight_right : Icons.turn_slight_left,
+          color: const Color(0xFF39D8B6),
+        );
+      }
+    }
+    return _instructionFromLocalPath(fallbackPath);
+  }
+
+  static List<Offset> _routeToLocalPath({
+    required Offset origin,
+    required double heading,
+    required List<Offset> points,
+  }) {
+    final result = <Offset>[const Offset(0, 0)];
+    final latRad = origin.dy * math.pi / 180;
+    final metersPerLon = 111320.0 * math.cos(latRad).abs().clamp(0.25, 1.0);
+    const metersPerLat = 111320.0;
+    final h = heading * math.pi / 180;
+    final sinH = math.sin(h);
+    final cosH = math.cos(h);
+
+    for (final point in points) {
+      final east = (point.dx - origin.dx) * metersPerLon;
+      final north = (point.dy - origin.dy) * metersPerLat;
+      final forward = east * sinH + north * cosH;
+      final lateral = east * cosH - north * sinH;
+      if (forward < -6) continue;
+      if (forward > 170) break;
+      if (result.isNotEmpty &&
+          (result.last - Offset(lateral, forward)).distance < 8) {
+        continue;
+      }
+      result.add(Offset(lateral.clamp(-44.0, 44.0), forward));
+    }
+
+    if (result.length < 3) {
+      return const [
+        Offset(0, 0),
+        Offset(0, 28),
+        Offset(0, 60),
+        Offset(0, 105),
+        Offset(0, 155),
+      ];
+    }
+    return _smoothLocalPath(result);
+  }
+
+  static List<Offset> _shapeUpcomingTurn(
+    List<Offset> points, {
+    required _CockpitTurnCue? cue,
+  }) {
+    final sampled = _densifyLocalPath(points);
+    if (cue == null ||
+        cue.distanceMeters > 140 ||
+        cue.deltaDegrees.abs() < 24) {
+      return sampled;
+    }
+
+    final turnStart = cue.distanceMeters.clamp(48.0, 112.0);
+    final turnLength = cue.distanceMeters < 55 ? 50.0 : 68.0;
+    final strength = (cue.deltaDegrees.abs() / 82).clamp(0.55, 1.0);
+    final targetLateral = cue.direction * (34.0 + 14.0 * strength);
+
+    return sampled.map((point) {
+      if (point.dy <= 58) return Offset(0, point.dy);
+      if (point.dy < turnStart) return point;
+
+      final progress = ((point.dy - turnStart) / turnLength).clamp(0.0, 1.0);
+      final eased = progress * progress * (3 - 2 * progress);
+      final lateral = point.dx * (1 - eased) + targetLateral * eased;
+      return Offset(lateral.clamp(-48.0, 48.0), point.dy);
+    }).toList();
+  }
+
+  static List<Offset> _densifyLocalPath(List<Offset> points) {
+    if (points.length < 2) return points;
+
+    const sampleYs = [0.0, 24.0, 48.0, 70.0, 92.0, 118.0, 146.0, 170.0];
+    final result = <Offset>[];
+    var segmentIndex = 0;
+    for (final y in sampleYs) {
+      while (
+          segmentIndex < points.length - 2 && points[segmentIndex + 1].dy < y) {
+        segmentIndex++;
+      }
+
+      final a = points[segmentIndex];
+      final b = points[math.min(segmentIndex + 1, points.length - 1)];
+      final span = b.dy - a.dy;
+      final t = span.abs() < 0.001 ? 0.0 : ((y - a.dy) / span).clamp(0.0, 1.0);
+      result.add(Offset(a.dx + (b.dx - a.dx) * t, y));
+    }
+    return _anchorVehicleLane(result);
+  }
+
+  static List<Offset> _smoothLocalPath(List<Offset> points) {
+    final cleaned = <Offset>[points.first];
+    for (final point in points.skip(1)) {
+      final previous = cleaned.last;
+      if (point.dy <= previous.dy + 2) continue;
+
+      final forwardDelta = point.dy - previous.dy;
+      final maxLateralStep = math.max(9.0, forwardDelta * 0.42);
+      final nextLateral = point.dx.clamp(
+        previous.dx - maxLateralStep,
+        previous.dx + maxLateralStep,
+      );
+      cleaned.add(Offset(nextLateral, point.dy));
+    }
+
+    if (cleaned.length < 3) {
+      return const [
+        Offset(0, 0),
+        Offset(0, 28),
+        Offset(0, 60),
+        Offset(0, 105),
+        Offset(0, 155),
+      ];
+    }
+
+    final smoothed = <Offset>[cleaned.first];
+    for (var i = 1; i < cleaned.length - 1; i++) {
+      final previous = cleaned[i - 1];
+      final current = cleaned[i];
+      final next = cleaned[i + 1];
+      smoothed.add(
+        Offset(
+          previous.dx * 0.18 + current.dx * 0.64 + next.dx * 0.18,
+          current.dy,
+        ),
+      );
+    }
+    smoothed.add(cleaned.last);
+    return _anchorVehicleLane(smoothed);
+  }
+
+  static List<Offset> _anchorVehicleLane(List<Offset> points) {
+    return points.map((point) {
+      if (point.dy <= 58) {
+        return Offset(0, point.dy);
+      }
+
+      final curveProgress = ((point.dy - 58) / 62).clamp(0.0, 1.0);
+      final eased = curveProgress * curveProgress * (3 - 2 * curveProgress);
+      return Offset(point.dx * eased, point.dy);
+    }).toList();
+  }
+
+  static _CockpitInstruction _instructionFromLocalPath(List<Offset> localPath) {
+    if (localPath.length < 3) {
+      return const _CockpitInstruction(
+        title: 'Siga em frente',
+        icon: Icons.straight,
+        color: _HomeScreenState._blue,
+      );
+    }
+
+    final mid = localPath[(localPath.length / 2).floor()];
+    final end = localPath.last;
+    final lateral = (mid.dx * 0.45) + (end.dx * 0.55);
+    if (lateral > 24) {
+      return const _CockpitInstruction(
+        title: 'Curva a direita',
+        icon: Icons.turn_slight_right,
+        color: Color(0xFF39D8B6),
+      );
+    }
+    if (lateral < -24) {
+      return const _CockpitInstruction(
+        title: 'Curva a esquerda',
+        icon: Icons.turn_slight_left,
+        color: Color(0xFF39D8B6),
+      );
+    }
+    return const _CockpitInstruction(
+      title: 'Siga em frente',
+      icon: Icons.straight,
+      color: _HomeScreenState._blue,
+    );
+  }
+}
+
+class _CockpitInstruction {
+  const _CockpitInstruction({
+    required this.title,
+    required this.icon,
+    required this.color,
+  });
+
+  final String title;
+  final IconData icon;
+  final Color color;
+}
+
+class _CockpitRoadMatch {
+  const _CockpitRoadMatch({
+    required this.points,
+    required this.heading,
+    required this.roadName,
+  });
+
+  final List<Offset> points;
+  final double heading;
+  final String roadName;
+}
+
+class _CockpitRouteMatch {
+  const _CockpitRouteMatch({
+    required this.points,
+    required this.heading,
+    required this.nearestIndex,
+  });
+
+  final List<Offset> points;
+  final double heading;
+  final int nearestIndex;
+}
+
+class _CockpitTurnCue {
+  const _CockpitTurnCue({
+    required this.direction,
+    required this.distanceMeters,
+    required this.deltaDegrees,
+  });
+
+  final double direction;
+  final double distanceMeters;
+  final double deltaDegrees;
+
+  static _CockpitTurnCue? fromRoutePoints(List<Offset> points) {
+    if (points.length < 4) return null;
+
+    var traveled = 0.0;
+    var previousBearing = _bearingDegrees(points[0], points[1]);
+    for (var i = 1; i < points.length - 1; i++) {
+      traveled += _distanceMeters(points[i - 1], points[i]);
+      if (traveled > 145) break;
+
+      final nextBearing = _bearingDegrees(points[i], points[i + 1]);
+      final delta = _angleDelta(previousBearing, nextBearing);
+      if (delta.abs() >= 24) {
+        return _CockpitTurnCue(
+          direction: delta > 0 ? 1 : -1,
+          distanceMeters: traveled,
+          deltaDegrees: delta,
+        );
+      }
+      previousBearing = nextBearing;
+    }
+    return null;
+  }
+}
+
+class _CockpitRouteMatcher {
+  static _CockpitRouteMatch? match({
+    required List<Offset> points,
+    required Offset origin,
+    required double? heading,
+  }) {
+    if (points.length < 2) return null;
+
+    _CandidateRouteSegment? best;
+    for (var i = 0; i < points.length - 1; i++) {
+      final candidate = _CandidateRouteSegment.from(
+        points: points,
+        segmentIndex: i,
+        origin: origin,
+        heading: heading,
+      );
+      if (candidate == null) continue;
+      if (best == null || candidate.score < best.score) {
+        best = candidate;
+      }
+    }
+
+    if (best == null) return null;
+    final matchedPoints = <Offset>[best.projectedLonLat];
+    var totalMeters = 0.0;
+    var previous = best.projectedLonLat;
+    for (var i = best.segmentIndex + 1; i < points.length; i++) {
+      final point = points[i];
+      totalMeters += _distanceMeters(previous, point);
+      if ((matchedPoints.last - point).distance > 0.00001) {
+        matchedPoints.add(point);
+      }
+      previous = point;
+      if (totalMeters >= 190) break;
+    }
+
+    if (matchedPoints.length < 2) return null;
+    final headingPoint = matchedPoints.length > 2
+        ? matchedPoints[2]
+        : matchedPoints[matchedPoints.length - 1];
+    return _CockpitRouteMatch(
+      points: matchedPoints,
+      heading: _bearingDegrees(matchedPoints.first, headingPoint),
+      nearestIndex: best.segmentIndex,
+    );
+  }
+}
+
+class _CandidateRouteSegment {
+  const _CandidateRouteSegment({
+    required this.segmentIndex,
+    required this.projectedLonLat,
+    required this.segmentHeading,
+    required this.score,
+  });
+
+  final int segmentIndex;
+  final Offset projectedLonLat;
+  final double segmentHeading;
+  final double score;
+
+  static _CandidateRouteSegment? from({
+    required List<Offset> points,
+    required int segmentIndex,
+    required Offset origin,
+    required double? heading,
+  }) {
+    final a = points[segmentIndex];
+    final b = points[segmentIndex + 1];
+    final aMeters = _metersFromOrigin(origin, a);
+    final bMeters = _metersFromOrigin(origin, b);
+    final ab = bMeters - aMeters;
+    final lengthSquared = ab.dx * ab.dx + ab.dy * ab.dy;
+    if (lengthSquared < 4) return null;
+
+    final ao = Offset(-aMeters.dx, -aMeters.dy);
+    final t = ((ao.dx * ab.dx + ao.dy * ab.dy) / lengthSquared).clamp(0.0, 1.0);
+    final projectedMeters = Offset(
+      aMeters.dx + ab.dx * t,
+      aMeters.dy + ab.dy * t,
+    );
+    final distance = projectedMeters.distance;
+    final projectedLonLat = Offset(
+      a.dx + (b.dx - a.dx) * t,
+      a.dy + (b.dy - a.dy) * t,
+    );
+    final segmentHeading = _bearingDegrees(a, b);
+    final headingPenalty = heading == null
+        ? 0.0
+        : _angleDelta(segmentHeading, heading).abs().clamp(0.0, 90.0);
+    final score = distance + headingPenalty * 0.18;
+
+    return _CandidateRouteSegment(
+      segmentIndex: segmentIndex,
+      projectedLonLat: projectedLonLat,
+      segmentHeading: segmentHeading,
+      score: score,
+    );
+  }
+}
+
+class _CockpitRoadMatcher {
+  static _CockpitRoadMatch? match({
+    required _PelotasMapData mapData,
+    required Offset origin,
+    required double? heading,
+  }) {
+    _CandidateRoadSegment? best;
+
+    for (final road in mapData.roads) {
+      final points = road.points;
+      if (points.length < 2) continue;
+      for (var i = 0; i < points.length - 1; i++) {
+        final candidate = _CandidateRoadSegment.from(
+          road: road,
+          segmentIndex: i,
+          origin: origin,
+          heading: heading,
+        );
+        if (candidate == null) continue;
+        if (best == null || candidate.score < best.score) {
+          best = candidate;
+        }
+      }
+    }
+
+    if (best == null || best.distanceMeters > 75) return null;
+
+    final roadPoints = best.road.points;
+    final forward = heading == null ||
+        _angleDelta(best.segmentHeading, heading).abs() <= 90;
+    final matchedPoints = <Offset>[best.projectedLonLat];
+    var totalMeters = 0.0;
+    var previous = best.projectedLonLat;
+
+    if (forward) {
+      for (var i = best.segmentIndex + 1; i < roadPoints.length; i++) {
+        final point = roadPoints[i];
+        totalMeters += _distanceMeters(previous, point);
+        if ((matchedPoints.last - point).distance > 0.00001) {
+          matchedPoints.add(point);
+        }
+        previous = point;
+        if (totalMeters >= 190) break;
+      }
+    } else {
+      for (var i = best.segmentIndex; i >= 0; i--) {
+        final point = roadPoints[i];
+        totalMeters += _distanceMeters(previous, point);
+        if ((matchedPoints.last - point).distance > 0.00001) {
+          matchedPoints.add(point);
+        }
+        previous = point;
+        if (totalMeters >= 190) break;
+      }
+    }
+
+    if (matchedPoints.length < 3) return null;
+
+    final roadHeading = _bearingDegrees(
+      matchedPoints.first,
+      matchedPoints[math.min(2, matchedPoints.length - 1)],
+    );
+    return _CockpitRoadMatch(
+      points: matchedPoints,
+      heading: roadHeading,
+      roadName: 'Rua atual',
+    );
+  }
+}
+
+class _CandidateRoadSegment {
+  const _CandidateRoadSegment({
+    required this.road,
+    required this.segmentIndex,
+    required this.projectedLonLat,
+    required this.distanceMeters,
+    required this.segmentHeading,
+    required this.score,
+  });
+
+  final _PelotasRoad road;
+  final int segmentIndex;
+  final Offset projectedLonLat;
+  final double distanceMeters;
+  final double segmentHeading;
+  final double score;
+
+  static _CandidateRoadSegment? from({
+    required _PelotasRoad road,
+    required int segmentIndex,
+    required Offset origin,
+    required double? heading,
+  }) {
+    final a = road.points[segmentIndex];
+    final b = road.points[segmentIndex + 1];
+    final aMeters = _metersFromOrigin(origin, a);
+    final bMeters = _metersFromOrigin(origin, b);
+    final ab = bMeters - aMeters;
+    final lengthSquared = ab.dx * ab.dx + ab.dy * ab.dy;
+    if (lengthSquared < 4) return null;
+
+    final ao = Offset(-aMeters.dx, -aMeters.dy);
+    final t = ((ao.dx * ab.dx + ao.dy * ab.dy) / lengthSquared).clamp(0.0, 1.0);
+    final projectedMeters = Offset(
+      aMeters.dx + ab.dx * t,
+      aMeters.dy + ab.dy * t,
+    );
+    final distance = projectedMeters.distance;
+    if (distance > 95) return null;
+
+    final projectedLonLat = Offset(
+      a.dx + (b.dx - a.dx) * t,
+      a.dy + (b.dy - a.dy) * t,
+    );
+    final segmentHeading = _bearingDegrees(a, b);
+    final headingPenalty = heading == null
+        ? 0.0
+        : math.min(
+            _angleDelta(segmentHeading, heading).abs(),
+            _angleDelta((segmentHeading + 180) % 360, heading).abs(),
+          );
+    final rankBonus = road.rank * 1.8;
+    final score = distance + headingPenalty * 0.82 - rankBonus;
+
+    return _CandidateRoadSegment(
+      road: road,
+      segmentIndex: segmentIndex,
+      projectedLonLat: projectedLonLat,
+      distanceMeters: distance,
+      segmentHeading: segmentHeading,
+      score: score,
+    );
+  }
+}
+
+class _CockpitDrivePainter extends CustomPainter {
+  const _CockpitDrivePainter({
+    required this.routeInfo,
+    required this.active,
+    required this.darkMode,
+  });
+
+  static const Color _renderSafeBlue = Color(0xFF39D8B6);
+  static const Color _renderSafeCyan = Color(0xFF9AF2D8);
+
+  final _CockpitRouteInfo routeInfo;
+  final bool active;
+  final bool darkMode;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    _drawRoad(canvas, size);
+    _drawRoute(canvas, size);
+  }
+
+  void _drawRoad(Canvas canvas, Size size) {
+    final centerPath = _roadCenterPath();
+    _drawRoadCone(canvas, size, centerPath);
+
+    final edgePaint = Paint()
+      ..color = _renderSafeBlue.withValues(alpha: active ? 0.74 : 0.34)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.4
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    _drawOffsetPath(canvas, size, centerPath, 24, edgePaint);
+    _drawOffsetPath(canvas, size, centerPath, -24, edgePaint);
+
+    final lanePaint = Paint()
+      ..color = Colors.white.withValues(alpha: darkMode ? 0.1 : 0.18)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.8
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    _drawOffsetPath(canvas, size, centerPath, 0, lanePaint);
+  }
+
+  void _drawRoadCone(Canvas canvas, Size size, List<Offset> centerPath) {
+    if (centerPath.length < 2) return;
+
+    final left = <Offset>[];
+    final right = <Offset>[];
+    for (final point in centerPath) {
+      final depth = (point.dy / 180).clamp(0.0, 1.0);
+      final width = 42.0 - depth * 17.0;
+      left.add(_project(Offset(point.dx - width, point.dy), size));
+      right.add(_project(Offset(point.dx + width, point.dy), size));
+    }
+
+    final cone = Path()..moveTo(left.first.dx, left.first.dy);
+    for (var i = 1; i < left.length; i++) {
+      final previous = left[i - 1];
+      final current = left[i];
+      final mid = Offset(
+        (previous.dx + current.dx) / 2,
+        (previous.dy + current.dy) / 2,
+      );
+      cone.quadraticBezierTo(previous.dx, previous.dy, mid.dx, mid.dy);
+    }
+    cone.lineTo(left.last.dx, left.last.dy);
+    for (var i = right.length - 1; i > 0; i--) {
+      final previous = right[i];
+      final current = right[i - 1];
+      final mid = Offset(
+        (previous.dx + current.dx) / 2,
+        (previous.dy + current.dy) / 2,
+      );
+      cone.quadraticBezierTo(previous.dx, previous.dy, mid.dx, mid.dy);
+    }
+    cone.lineTo(right.first.dx, right.first.dy);
+    cone.close();
+
+    canvas.drawPath(
+      cone,
+      Paint()
+        ..color = (darkMode ? const Color(0xFF383C3D) : const Color(0xFF98A0A6))
+            .withValues(alpha: darkMode ? 0.78 : 0.68)
+        ..style = PaintingStyle.fill,
+    );
+  }
+
+  List<Offset> _roadCenterPath() {
+    final points = routeInfo.localPath;
+    if (points.length >= 3) return points;
+    return const [
+      Offset(0, 0),
+      Offset(0, 28),
+      Offset(0, 60),
+      Offset(0, 105),
+      Offset(0, 155),
+    ];
+  }
+
+  void _drawOffsetPath(
+    Canvas canvas,
+    Size size,
+    List<Offset> centerPath,
+    double lateralMeters,
+    Paint paint,
+  ) {
+    final points = centerPath
+        .map((point) => Offset(point.dx + lateralMeters, point.dy))
+        .map((point) => _project(point, size))
+        .toList();
+    canvas.drawPath(_smoothScreenPath(points), paint);
+  }
+
+  void _drawRoute(Canvas canvas, Size size) {
+    if (!routeInfo.hasRoute) return;
+    final points = routeInfo.localPath;
+    if (points.length < 2) return;
+
+    final path = _smoothScreenPath(
+      points.map((point) => _project(point, size)).toList(),
+    );
+
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = _renderSafeCyan.withValues(alpha: 0.12)
+        ..strokeWidth = 9
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round,
+    );
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = _renderSafeBlue.withValues(alpha: active ? 0.9 : 0.58)
+        ..strokeWidth = 4.0
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round,
+    );
+  }
+
+  Offset _project(Offset local, Size size) {
+    final forward = local.dy.clamp(0.0, 180.0);
+    final depth = (forward / 180.0).clamp(0.0, 1.0);
+    final eased = 1 - math.pow(1 - depth, 2.15).toDouble();
+    final bottomY = size.height * 0.88;
+    final horizonY = size.height * 0.2;
+    final y = bottomY - eased * (bottomY - horizonY);
+    final scale = 1.08 - eased * 0.86;
+    final x = size.width / 2 + local.dx * scale * (size.width / 78);
+    return Offset(x, y);
+  }
+
+  Path _smoothScreenPath(List<Offset> points) {
+    final path = Path();
+    if (points.isEmpty) return path;
+    path.moveTo(points.first.dx, points.first.dy);
+    if (points.length == 1) return path;
+
+    for (var i = 1; i < points.length; i++) {
+      final previous = points[i - 1];
+      final current = points[i];
+      final mid = Offset(
+        (previous.dx + current.dx) / 2,
+        (previous.dy + current.dy) / 2,
+      );
+      path.quadraticBezierTo(previous.dx, previous.dy, mid.dx, mid.dy);
+    }
+    path.lineTo(points.last.dx, points.last.dy);
+    return path;
+  }
+
+  @override
+  bool shouldRepaint(covariant _CockpitDrivePainter oldDelegate) {
+    return oldDelegate.routeInfo != routeInfo ||
+        oldDelegate.active != active ||
+        oldDelegate.darkMode != darkMode;
+  }
+}
+
+final Future<_PelotasMapData> _pelotasMapDataFuture = _PelotasMapData.load();
+
+class _PelotasOfflineMapCard extends StatelessWidget {
+  const _PelotasOfflineMapCard({
+    required this.latitude,
+    required this.longitude,
+    required this.heading,
+    required this.active,
+    required this.vehicleIcon,
+    required this.route,
+    required this.onTap,
+  });
+
+  final double? latitude;
+  final double? longitude;
+  final double? heading;
+  final bool active;
+  final String vehicleIcon;
+  final OfflineRoute? route;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        child: ClipRect(
+          child: FutureBuilder<_PelotasMapData>(
+            future: _pelotasMapDataFuture,
+            builder: (context, snapshot) {
+              final routeInfo = _CockpitRouteInfo.fromRoute(
+                route: route,
+                latitude: latitude,
+                longitude: longitude,
+                heading: heading,
+                mapData: snapshot.data,
+              );
+
+              return Stack(
+                children: [
+                  Positioned.fill(
+                    child: CustomPaint(
+                      painter: _CockpitDrivePainter(
+                        routeInfo: routeInfo,
+                        active: active,
+                        darkMode:
+                            Theme.of(context).brightness == Brightness.dark,
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 8,
+                    top: 7,
+                    right: 8,
+                    child: Row(
+                      children: [
+                        Icon(
+                          routeInfo.icon,
+                          color: routeInfo.turnColor,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 5),
+                        Expanded(
+                          child: Text(
+                            routeInfo.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: colors.primaryText,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0,
+                            ),
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: (active
+                                    ? _HomeScreenState._green
+                                    : _HomeScreenState._blue)
+                                .withValues(alpha: 0.18),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: active
+                                  ? _HomeScreenState._green
+                                  : _HomeScreenState._blue,
+                              width: 0.8,
+                            ),
+                          ),
+                          child: Text(
+                            routeInfo.hasRoute
+                                ? routeInfo.distanceLabel
+                                : active
+                                    ? routeInfo.distanceLabel
+                                    : 'GPS',
+                            style: TextStyle(
+                              color: active
+                                  ? _HomeScreenState._green
+                                  : _HomeScreenState._blue,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Align(
+                    alignment: const Alignment(0, 0.68),
+                    child: FractionallySizedBox(
+                      widthFactor: 1.0,
+                      heightFactor: 0.84,
+                      child: Image.asset(
+                        'assets/images/car_top.png',
+                        fit: BoxFit.contain,
+                        filterQuality: FilterQuality.high,
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 10,
+                    bottom: 8,
+                    right: 10,
+                    child: Text(
+                      routeInfo.subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: colors.secondaryText,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PelotasMapData {
+  const _PelotasMapData({
+    required this.bounds,
+    required this.center,
+    required this.roads,
+    required this.fuelStations,
+  });
+
+  final List<double> bounds;
+  final Offset center;
+  final List<_PelotasRoad> roads;
+  final List<_FuelStation> fuelStations;
+
+  static Future<_PelotasMapData> load() async {
+    final text = await rootBundle.loadString('assets/maps/rs_sul_region.json');
+    final json = jsonDecode(text) as Map<String, dynamic>;
+    final bounds = (json['bounds'] as List).map((v) => v as num).toList();
+    final center = (json['center'] as List).map((v) => v as num).toList();
+    final roads = (json['roads'] as List)
+        .map((road) => _PelotasRoad.fromJson(road as Map<String, dynamic>))
+        .toList();
+    final stations = ((json['fuel_stations'] as List?) ?? [])
+        .map(
+            (station) => _FuelStation.fromJson(station as Map<String, dynamic>))
+        .toList();
+
+    return _PelotasMapData(
+      bounds: bounds.map((v) => v.toDouble()).toList(),
+      center: Offset(center[1].toDouble(), center[0].toDouble()),
+      roads: roads,
+      fuelStations: stations,
+    );
+  }
+}
+
+class _PelotasRoad {
+  const _PelotasRoad({
+    required this.rank,
+    required this.points,
+  });
+
+  final int rank;
+  final List<Offset> points;
+
+  factory _PelotasRoad.fromJson(Map<String, dynamic> json) {
+    final points = (json['p'] as List).map((point) {
+      final values = point as List;
+      final lat = (values[0] as num).toDouble();
+      final lon = (values[1] as num).toDouble();
+      return Offset(lon, lat);
+    }).toList();
+
+    return _PelotasRoad(
+      rank: (json['r'] as num).toInt(),
+      points: points,
+    );
+  }
+}
+
+class _FuelStation {
+  const _FuelStation({
+    required this.name,
+    required this.position,
+  });
+
+  final String name;
+  final Offset position;
+
+  factory _FuelStation.fromJson(Map<String, dynamic> json) {
+    final values = json['p'] as List;
+    final lat = (values[0] as num).toDouble();
+    final lon = (values[1] as num).toDouble();
+
+    return _FuelStation(
+      name: (json['n'] as String?) ?? 'Posto',
+      position: Offset(lon, lat),
+    );
+  }
+}
+
+// ignore: unused_element
+class _PelotasMapPainter extends CustomPainter {
+  const _PelotasMapPainter({
+    required this.data,
+    required this.latitude,
+    required this.longitude,
+    required this.heading,
+    required this.active,
+    required this.vehicleIcon,
+    required this.route,
+    required this.darkMode,
+  });
+
+  final _PelotasMapData data;
+  final double? latitude;
+  final double? longitude;
+  final double? heading;
+  final bool active;
+  final String vehicleIcon;
+  final OfflineRoute? route;
+  final bool darkMode;
+
+  bool get _hasGps => latitude != null && longitude != null;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final background = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: darkMode
+            ? const [Color(0xFF020814), Color(0xFF071527)]
+            : const [Color(0xFFEAF2FF), Color(0xFFFFFFFF)],
+      ).createShader(Offset.zero & size);
+
+    canvas.drawRect(Offset.zero & size, background);
+    _drawGrid(canvas, size);
+    _drawRoads(canvas, size);
+    _drawFuelStations(canvas, size);
+    _drawRoute(canvas, size);
+    _drawVehicle(canvas, size);
+  }
+
+  void _drawGrid(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = (darkMode ? Colors.white : Colors.black).withValues(alpha: 0.03)
+      ..strokeWidth = 1;
+
+    const spacing = 34.0;
+    for (var x = 0.0; x <= size.width; x += spacing) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
+    }
+    for (var y = 0.0; y <= size.height; y += spacing) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
+    }
+  }
+
+  void _drawRoads(Canvas canvas, Size size) {
+    final minorRoad =
+        darkMode ? const Color(0xFF294560) : const Color(0xFFB8CBE0);
+    final localRoad =
+        darkMode ? const Color(0xFF4F7393) : const Color(0xFF8EA9C4);
+    final collectorRoad =
+        darkMode ? const Color(0xFF6FA0C4) : const Color(0xFF678CAC);
+    final mainRoad =
+        darkMode ? const Color(0xFF39D8B6) : const Color(0xFF168C78);
+    final glowRoad =
+        darkMode ? const Color(0xFF39D8B6) : const Color(0xFF168C78);
+    final gpsScale = _hasGps ? 4.2 : 1.0;
+    final paints = <int, Paint>{
+      0: Paint()
+        ..color = minorRoad.withValues(alpha: darkMode ? 0.55 : 0.65)
+        ..strokeWidth = 0.45 * gpsScale
+        ..style = PaintingStyle.stroke,
+      1: Paint()
+        ..color = localRoad.withValues(alpha: darkMode ? 0.7 : 0.75)
+        ..strokeWidth = 0.65 * gpsScale
+        ..style = PaintingStyle.stroke,
+      2: Paint()
+        ..color = collectorRoad.withValues(alpha: 0.82)
+        ..strokeWidth = 0.85 * gpsScale
+        ..style = PaintingStyle.stroke,
+      3: Paint()
+        ..color = mainRoad.withValues(alpha: 0.85)
+        ..strokeWidth = 1.05 * gpsScale
+        ..style = PaintingStyle.stroke,
+      4: Paint()
+        ..color = glowRoad.withValues(alpha: 0.9)
+        ..strokeWidth = 1.35 * gpsScale
+        ..style = PaintingStyle.stroke,
+      5: Paint()
+        ..color = _HomeScreenState._green.withValues(alpha: 0.9)
+        ..strokeWidth = 1.55 * gpsScale
+        ..style = PaintingStyle.stroke,
+    };
+
+    final visibleRect = (Offset.zero & size).inflate(_hasGps ? 260 : 40);
+
+    for (final road in data.roads) {
+      if (road.points.length < 2) continue;
+
+      final projectedPoints = road.points
+          .map((point) => _project(point, size))
+          .toList(growable: false);
+      if (!_projectedPathTouches(projectedPoints, visibleRect)) continue;
+
+      final path = Path()
+        ..moveTo(projectedPoints.first.dx, projectedPoints.first.dy);
+
+      for (var i = 1; i < projectedPoints.length; i++) {
+        final point = projectedPoints[i];
+        path.lineTo(point.dx, point.dy);
+      }
+
+      canvas.drawPath(path, paints[road.rank] ?? paints[1]!);
+    }
+  }
+
+  void _drawFuelStations(Canvas canvas, Size size) {
+    final visibleRect = (Offset.zero & size).inflate(18);
+    final stationPaint = Paint()
+      ..color = _HomeScreenState._green
+      ..style = PaintingStyle.fill;
+    final haloPaint = Paint()
+      ..color = _HomeScreenState._green.withValues(alpha: 0.2)
+      ..style = PaintingStyle.fill;
+    final darkPaint = Paint()
+      ..color = const Color(0xFF03101E)
+      ..style = PaintingStyle.fill;
+    final hosePaint = Paint()
+      ..color = const Color(0xFF03101E)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1
+      ..strokeCap = StrokeCap.round;
+
+    for (final station in data.fuelStations) {
+      final point = _project(station.position, size);
+      if (!visibleRect.contains(point)) continue;
+
+      canvas.drawCircle(point, 8, haloPaint);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromCenter(center: point, width: 9, height: 10),
+          const Radius.circular(2),
+        ),
+        stationPaint,
+      );
+      canvas.drawRect(
+        Rect.fromLTWH(point.dx - 2.2, point.dy - 2.6, 3.4, 2.6),
+        darkPaint,
+      );
+      canvas.drawPath(
+        Path()
+          ..moveTo(point.dx + 3.2, point.dy - 1.5)
+          ..quadraticBezierTo(
+            point.dx + 7,
+            point.dy,
+            point.dx + 4,
+            point.dy + 5,
+          ),
+        hosePaint,
+      );
+    }
+  }
+
+  void _drawRoute(Canvas canvas, Size size) {
+    final points = route?.points;
+    if (points == null || points.length < 2) return;
+
+    final routePoints = _hasGps ? _routePointsFromCar(points) : points;
+    final projectedPoints = routePoints
+        .map((point) => _project(point, size))
+        .toList(growable: false);
+    final visibleRect = (Offset.zero & size).inflate(280);
+    if (!_projectedPathTouches(projectedPoints, visibleRect)) return;
+
+    final path = Path()
+      ..moveTo(projectedPoints.first.dx, projectedPoints.first.dy);
+    for (var i = 1; i < projectedPoints.length; i++) {
+      path.lineTo(projectedPoints[i].dx, projectedPoints[i].dy);
+    }
+
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = const Color(0xFF9AF2D8).withValues(alpha: 0.16)
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..strokeWidth = 9,
+    );
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = _HomeScreenState._blue
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..strokeWidth = 4.5,
+    );
+  }
+
+  List<Offset> _routePointsFromCar(List<Offset> points) {
+    final car = _viewCenter;
+    var nearestIndex = 0;
+    var nearestMeters = double.infinity;
+    for (var i = 0; i < points.length; i++) {
+      final meters = _distanceMeters(car, points[i]);
+      if (meters < nearestMeters) {
+        nearestMeters = meters;
+        nearestIndex = i;
+      }
+    }
+
+    return [car, ...points.skip(nearestIndex)];
+  }
+
+  bool _projectedPathTouches(List<Offset> points, Rect visibleRect) {
+    if (points.any(visibleRect.contains)) return true;
+
+    for (var i = 1; i < points.length; i++) {
+      final a = points[i - 1];
+      final b = points[i];
+      final segmentBounds = Rect.fromLTRB(
+        math.min(a.dx, b.dx),
+        math.min(a.dy, b.dy),
+        math.max(a.dx, b.dx),
+        math.max(a.dy, b.dy),
+      );
+      if (segmentBounds.overlaps(visibleRect)) return true;
+    }
+
+    return false;
+  }
+
+  void _drawVehicle(Canvas canvas, Size size) {
+    final point = _project(_viewCenter, size);
+    final color =
+        active && _hasGps ? _HomeScreenState._green : _HomeScreenState._blue;
+    final radius = active && _hasGps ? 13.0 : 10.0;
+
+    canvas.drawCircle(
+      point,
+      radius * 1.4,
+      Paint()..color = color.withValues(alpha: 0.18),
+    );
+    _drawVehicleIcon(canvas, point, color, radius, heading ?? 0);
+  }
+
+  void _drawVehicleIcon(
+    Canvas canvas,
+    Offset center,
+    Color color,
+    double radius,
+    double headingDegrees,
+  ) {
+    canvas.save();
+    canvas.translate(center.dx, center.dy);
+    canvas
+        .rotate(_mapRotationRadians == 0 ? headingDegrees * math.pi / 180 : 0);
+
+    final shadow = Paint()
+      ..color = Colors.black.withValues(alpha: darkMode ? 0.45 : 0.22)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
+    final fill = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+    final accent = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.fill;
+
+    final path = _vehicleIconPath(radius);
+    canvas.drawPath(path.shift(const Offset(1.2, 1.4)), shadow);
+    canvas.drawPath(path, fill);
+    canvas.drawCircle(
+      Offset(0, vehicleIcon == 'bolt' ? radius * 0.18 : radius * 0.14),
+      radius * 0.18,
+      accent,
+    );
+
+    canvas.restore();
+  }
+
+  Path _vehicleIconPath(double radius) {
+    switch (vehicleIcon) {
+      case 'shuttle':
+        return Path()
+          ..moveTo(0, -radius * 1.35)
+          ..cubicTo(
+            radius * 0.8,
+            -radius * 0.35,
+            radius * 0.55,
+            radius * 0.85,
+            0,
+            radius * 1.05,
+          )
+          ..cubicTo(
+            -radius * 0.55,
+            radius * 0.85,
+            -radius * 0.8,
+            -radius * 0.35,
+            0,
+            -radius * 1.35,
+          )
+          ..close();
+      case 'bolt':
+        return Path()
+          ..moveTo(radius * 0.12, -radius * 1.35)
+          ..lineTo(radius * 0.72, -radius * 0.12)
+          ..lineTo(radius * 0.26, -radius * 0.12)
+          ..lineTo(radius * 0.56, radius * 1.2)
+          ..lineTo(-radius * 0.72, -radius * 0.32)
+          ..lineTo(-radius * 0.18, -radius * 0.32)
+          ..close();
+      case 'diamond':
+        return Path()
+          ..moveTo(0, -radius * 1.3)
+          ..lineTo(radius * 0.75, 0)
+          ..lineTo(0, radius * 1.05)
+          ..lineTo(-radius * 0.75, 0)
+          ..close();
+      case 'arrow':
+      default:
+        return Path()
+          ..moveTo(0, -radius * 1.35)
+          ..lineTo(radius * 0.78, radius * 1.05)
+          ..lineTo(0, radius * 0.52)
+          ..lineTo(-radius * 0.78, radius * 1.05)
+          ..close();
+    }
+  }
+
+  Offset _project(Offset lonLat, Size size) {
+    final center = _viewCenter;
+    final latSpan = _latitudeSpan;
+    final centerLat = center.dy * math.pi / 180;
+    final cosLat = math.cos(centerLat).abs().clamp(0.25, 1.0);
+    final lonSpan = latSpan * (size.width / size.height) / cosLat;
+    final minLat = center.dy - latSpan / 2;
+    final minLon = center.dx - lonSpan / 2;
+    final normalizedX = (lonLat.dx - minLon) / lonSpan;
+    final normalizedY = 1 - ((lonLat.dy - minLat) / latSpan);
+
+    return _rotateForCompass(
+      Offset(normalizedX * size.width, normalizedY * size.height),
+      size,
+    );
+  }
+
+  Offset get _viewCenter {
+    if (_hasGps) return Offset(longitude!, latitude!);
+    return data.center;
+  }
+
+  double get _latitudeSpan => _hasGps ? 0.00028 : 0.045;
+
+  double get _mapRotationRadians {
+    if (!_hasGps || heading == null) return 0;
+    return -(heading! * math.pi / 180);
+  }
+
+  Offset _rotateForCompass(Offset point, Size size) {
+    final angle = _mapRotationRadians;
+    if (angle == 0) return point;
+
+    final center = Offset(size.width / 2, size.height / 2);
+    final translated = point - center;
+    final cosA = math.cos(angle);
+    final sinA = math.sin(angle);
+    return Offset(
+          translated.dx * cosA - translated.dy * sinA,
+          translated.dx * sinA + translated.dy * cosA,
+        ) +
+        center;
+  }
+
+  @override
+  bool shouldRepaint(covariant _PelotasMapPainter oldDelegate) {
+    return oldDelegate.data != data ||
+        oldDelegate.latitude != latitude ||
+        oldDelegate.longitude != longitude ||
+        oldDelegate.heading != heading ||
+        oldDelegate.active != active ||
+        oldDelegate.vehicleIcon != vehicleIcon ||
+        oldDelegate.route != route ||
+        oldDelegate.darkMode != darkMode;
+  }
+}
+
+// ignore: unused_element
 class _TripPanel extends StatelessWidget {
   const _TripPanel({
     required this.distance,
@@ -1528,6 +3676,189 @@ class _ActionCard extends StatelessWidget {
   }
 }
 
+class _CompactCostCard extends StatelessWidget {
+  const _CompactCostCard({
+    required this.value,
+  });
+
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
+
+    return _Panel(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final dense =
+              constraints.maxWidth < 150 || constraints.maxHeight < 82;
+          return Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.attach_money,
+                color: colors.secondaryIcon,
+                size: dense ? 18 : 25,
+              ),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (!dense)
+                      Text(
+                        'CUSTO',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: colors.secondaryText,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    Text(
+                      value,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: colors.primaryText,
+                        fontSize: dense ? 12 : 17,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _NavigationRouteCard extends StatelessWidget {
+  const _NavigationRouteCard({
+    required this.instruction,
+    required this.destination,
+    required this.hasRoute,
+    required this.onTap,
+    required this.onFavoritesTap,
+  });
+
+  final _DashboardInstruction? instruction;
+  final String? destination;
+  final bool hasRoute;
+  final VoidCallback onTap;
+  final VoidCallback onFavoritesTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _DashboardColors.of(context);
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final dense = constraints.maxHeight < 95 || constraints.maxWidth < 190;
+        final title = instruction?.title ?? (hasRoute ? 'ROTA ATIVA' : 'ROTAS');
+        final detail =
+            instruction?.detail ?? destination ?? 'Favoritos e navegacao';
+
+        return Material(
+          color: Colors.transparent,
+          child: _Panel(
+            padding: EdgeInsets.all(dense ? 6 : 12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(8),
+                    onTap: onTap,
+                    child: Row(
+                      children: [
+                        _GlowIcon(
+                          icon: instruction?.icon ?? Icons.navigation,
+                          color: _HomeScreenState._blue,
+                          size: dense ? 32 : 54,
+                        ),
+                        SizedBox(width: dense ? 8 : 14),
+                        Expanded(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: _HomeScreenState._blue,
+                                  fontSize: dense ? 12 : 18,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                              SizedBox(height: dense ? 2 : 5),
+                              Text(
+                                detail,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: colors.secondaryText,
+                                  fontSize: dense ? 10 : 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: onFavoritesTap,
+                  child: Container(
+                    width: dense ? 34 : 46,
+                    height: double.infinity,
+                    decoration: BoxDecoration(
+                      color: _HomeScreenState._blue.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: _HomeScreenState._blue.withValues(alpha: 0.36),
+                      ),
+                    ),
+                    child: Icon(
+                      Icons.star,
+                      color: _HomeScreenState._blue,
+                      size: dense ? 18 : 24,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _DashboardInstruction {
+  const _DashboardInstruction({
+    required this.icon,
+    required this.title,
+    required this.detail,
+  });
+
+  final IconData icon;
+  final String title;
+  final String detail;
+}
+
+// ignore: unused_element
 class _GpsStatusCard extends StatelessWidget {
   const _GpsStatusCard({
     required this.active,
@@ -1836,6 +4167,61 @@ class _RoundStatusIcon extends StatelessWidget {
   }
 }
 
+class _HeaderGpsButton extends StatelessWidget {
+  const _HeaderGpsButton({
+    required this.active,
+    required this.onTap,
+    required this.compact,
+  });
+
+  final bool active;
+  final VoidCallback onTap;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = active ? _HomeScreenState._green : _HomeScreenState._blue;
+
+    return Tooltip(
+      message: active ? 'Parar GPS' : 'Iniciar GPS',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: Container(
+          height: compact ? 36 : 44,
+          padding: EdgeInsets.symmetric(horizontal: compact ? 9 : 13),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: color.withValues(alpha: 0.55)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                active ? Icons.location_on : Icons.gps_fixed,
+                color: color,
+                size: compact ? 18 : 22,
+              ),
+              if (!compact) ...[
+                const SizedBox(width: 8),
+                Text(
+                  active ? 'PARAR' : 'INICIAR',
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _FuelGaugePainter extends CustomPainter {
   _FuelGaugePainter({required this.percentage});
 
@@ -1908,4 +4294,41 @@ class _FuelGaugePainter extends CustomPainter {
   bool shouldRepaint(covariant _FuelGaugePainter oldDelegate) {
     return oldDelegate.percentage != percentage;
   }
+}
+
+double _distanceMeters(Offset a, Offset b) {
+  const p = 0.017453292519943295;
+  final hav = 0.5 -
+      math.cos((b.dy - a.dy) * p) / 2 +
+      math.cos(a.dy * p) *
+          math.cos(b.dy * p) *
+          (1 - math.cos((b.dx - a.dx) * p)) /
+          2;
+  return 12742 * math.asin(math.sqrt(hav)) * 1000;
+}
+
+Offset _metersFromOrigin(Offset origin, Offset point) {
+  final latRad = origin.dy * math.pi / 180;
+  final metersPerLon = 111320.0 * math.cos(latRad).abs().clamp(0.25, 1.0);
+  const metersPerLat = 111320.0;
+  return Offset(
+    (point.dx - origin.dx) * metersPerLon,
+    (point.dy - origin.dy) * metersPerLat,
+  );
+}
+
+double _bearingDegrees(Offset from, Offset to) {
+  final lat1 = from.dy * math.pi / 180;
+  final lat2 = to.dy * math.pi / 180;
+  final deltaLon = (to.dx - from.dx) * math.pi / 180;
+  final y = math.sin(deltaLon) * math.cos(lat2);
+  final x = math.cos(lat1) * math.sin(lat2) -
+      math.sin(lat1) * math.cos(lat2) * math.cos(deltaLon);
+  return (math.atan2(y, x) * 180 / math.pi + 360) % 360;
+}
+
+double _angleDelta(double from, double to) {
+  var delta = (to - from + 540) % 360 - 180;
+  if (delta < -180) delta += 360;
+  return delta;
 }

@@ -18,6 +18,7 @@ dependencies:
   shared_preferences: ^2.2.2
   audioplayers: ^6.1.0
   cupertino_icons: ^1.0.6
+  maplibre_gl: ^0.26.1
 
 dev_dependencies:
   flutter_test:
@@ -35,3 +36,6 @@ flutter:
   uses-material-design: true
   assets:
     - assets/audio/
+    - assets/images/
+    - assets/maps/pelotas_roads.json
+    - assets/maps/rs_sul_region.json

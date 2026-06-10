@@ -6,6 +6,7 @@ import 'providers/app_provider.dart';
 import 'screens/add_fuel_screen.dart';
 import 'screens/history_screen.dart';
 import 'screens/home_screen.dart';
+import 'screens/offline_map_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -46,6 +47,7 @@ class CarFuelApp extends StatelessWidget {
               '/': (context) => const HomeScreen(),
               '/addFuel': (context) => const AddFuelScreen(),
               '/history': (context) => const HistoryScreen(),
+              '/offlineMap': (context) => const OfflineMapScreen(),
             },
           );
         },

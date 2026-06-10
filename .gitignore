@@ -43,3 +43,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Large offline map databases stay local; the app currently packages the JSON map.
+assets/maps/*.mbtiles
