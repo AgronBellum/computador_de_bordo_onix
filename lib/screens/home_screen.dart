@@ -27,6 +27,7 @@ class _HomeScreenState extends State<HomeScreen> {
   OfflineMapData? _cachedNavigationMap;
   OfflineRouteCalculator? _cachedRouteCalculator;
   List<SavedMapPlace> _cachedPlaces = const [];
+  bool _showLocalMapPreview = false;
 
   static const Color _bg = Color(0xFF020914);
   static const Color _bar = Color(0xFF050D19);
@@ -314,7 +315,14 @@ class _HomeScreenState extends State<HomeScreen> {
                 active: provider.isGpsTracking,
                 vehicleIcon: provider.mapVehicleIcon,
                 route: provider.activeNavigationRoute,
-                onTap: () => Navigator.pushNamed(context, '/offlineMap'),
+                localMapPreview: _showLocalMapPreview,
+                onTap: () {
+                  if (_showLocalMapPreview) {
+                    Navigator.pushNamed(context, '/offlineMap');
+                  } else {
+                    setState(() => _showLocalMapPreview = true);
+                  }
+                },
               ),
             ),
           ],
@@ -1314,58 +1322,20 @@ class _HomeScreenState extends State<HomeScreen> {
     final route = provider.activeNavigationRoute;
     final lat = provider.lastGpsLatitude;
     final lon = provider.lastGpsLongitude;
-    if (route == null ||
-        lat == null ||
-        lon == null ||
-        route.points.length < 3) {
+    final instruction = _RouteManeuverInstruction.fromRoute(
+      route: route,
+      latitude: lat,
+      longitude: lon,
+      heading: provider.lastGpsHeading,
+    );
+    if (instruction == null) {
       return null;
     }
 
-    final origin = Offset(lon, lat);
-    var nearestIndex = 0;
-    var nearestMeters = double.infinity;
-    for (var i = 0; i < route.points.length; i++) {
-      final meters = _distanceMeters(origin, route.points[i]);
-      if (meters < nearestMeters) {
-        nearestMeters = meters;
-        nearestIndex = i;
-      }
-    }
-
-    final lookAheadIndex = math.min(nearestIndex + 3, route.points.length - 1);
-    final maneuverIndex = math.min(nearestIndex + 8, route.points.length - 1);
-    if (lookAheadIndex <= nearestIndex) return null;
-
-    final bearingNow = _bearingDegrees(origin, route.points[lookAheadIndex]);
-    var text = 'Siga em frente';
-    var icon = Icons.straight;
-
-    if (maneuverIndex > lookAheadIndex) {
-      final bearingNext = _bearingDegrees(
-        route.points[lookAheadIndex],
-        route.points[maneuverIndex],
-      );
-      final delta = _angleDelta(bearingNow, bearingNext);
-      if (delta > 35) {
-        text = 'Vire a direita';
-        icon = Icons.turn_right;
-      } else if (delta < -35) {
-        text = 'Vire a esquerda';
-        icon = Icons.turn_left;
-      }
-    }
-
-    var metersAhead = 0.0;
-    var previous = origin;
-    for (var i = nearestIndex; i <= maneuverIndex; i++) {
-      metersAhead += _distanceMeters(previous, route.points[i]);
-      previous = route.points[i];
-    }
-
     return _DashboardInstruction(
-      icon: icon,
-      title: text,
-      detail: '${metersAhead.clamp(0, 999).toStringAsFixed(0)} m',
+      icon: instruction.icon,
+      title: instruction.title,
+      detail: instruction.detail,
     );
   }
 
@@ -1891,6 +1861,145 @@ class _FuelGaugeCard extends StatelessWidget {
   }
 }
 
+class _RouteManeuverInstruction {
+  const _RouteManeuverInstruction({
+    required this.title,
+    required this.detail,
+    required this.distanceLabel,
+    required this.icon,
+    required this.color,
+  });
+
+  final String title;
+  final String detail;
+  final String distanceLabel;
+  final IconData icon;
+  final Color color;
+
+  static _RouteManeuverInstruction? fromRoute({
+    required OfflineRoute? route,
+    required double? latitude,
+    required double? longitude,
+    required double? heading,
+  }) {
+    final points = route?.points;
+    if (points == null ||
+        latitude == null ||
+        longitude == null ||
+        points.length < 2) {
+      return null;
+    }
+
+    final origin = Offset(longitude, latitude);
+    final match = _CockpitRouteMatcher.match(
+      points: points,
+      origin: origin,
+      heading: heading,
+    );
+    final startIndex =
+        match?.nearestIndex ?? _nearestRouteIndex(points, origin);
+    final startPoint = match?.points.first ?? origin;
+    final segmentStart = startIndex.clamp(0, points.length - 2).toInt();
+    final maneuver = _findNextManeuver(
+      points: points,
+      startPoint: startPoint,
+      segmentStart: segmentStart,
+    );
+
+    if (maneuver != null) return maneuver;
+
+    final remainingMeters = _remainingRouteMeters(
+      points: points,
+      startPoint: startPoint,
+      segmentStart: segmentStart,
+    );
+
+    return _RouteManeuverInstruction(
+      title: 'Siga em frente',
+      detail: 'por ${_formatRouteDistance(remainingMeters)}',
+      distanceLabel: _formatRouteDistance(remainingMeters),
+      icon: Icons.straight,
+      color: _HomeScreenState._blue,
+    );
+  }
+
+  static _RouteManeuverInstruction? _findNextManeuver({
+    required List<Offset> points,
+    required Offset startPoint,
+    required int segmentStart,
+  }) {
+    var metersAhead = 0.0;
+    var previous = startPoint;
+
+    for (var i = segmentStart + 1; i < points.length - 1; i++) {
+      final vertex = points[i];
+      metersAhead += _distanceMeters(previous, vertex);
+
+      final bearingIn = _bearingDegrees(
+        i == segmentStart + 1 ? startPoint : points[i - 1],
+        vertex,
+      );
+      final bearingOut = _bearingDegrees(vertex, points[i + 1]);
+      final delta = _angleDelta(bearingIn, bearingOut);
+      final absDelta = delta.abs();
+
+      if (absDelta >= 30) {
+        final right = delta > 0;
+        return _RouteManeuverInstruction(
+          title: right ? 'Vire a direita' : 'Vire a esquerda',
+          detail: 'em ${_formatRouteDistance(metersAhead)}',
+          distanceLabel: _formatRouteDistance(metersAhead),
+          icon: right ? Icons.turn_right : Icons.turn_left,
+          color: const Color(0xFF39D8B6),
+        );
+      }
+
+      if (absDelta >= 17) {
+        final right = delta > 0;
+        return _RouteManeuverInstruction(
+          title: right ? 'Curva a direita' : 'Curva a esquerda',
+          detail: 'em ${_formatRouteDistance(metersAhead)}',
+          distanceLabel: _formatRouteDistance(metersAhead),
+          icon: right ? Icons.turn_slight_right : Icons.turn_slight_left,
+          color: const Color(0xFF39D8B6),
+        );
+      }
+
+      previous = vertex;
+      if (metersAhead > 3200) break;
+    }
+
+    return null;
+  }
+
+  static int _nearestRouteIndex(List<Offset> points, Offset origin) {
+    var nearestIndex = 0;
+    var nearestMeters = double.infinity;
+    for (var i = 0; i < points.length; i++) {
+      final meters = _distanceMeters(origin, points[i]);
+      if (meters < nearestMeters) {
+        nearestMeters = meters;
+        nearestIndex = i;
+      }
+    }
+    return nearestIndex.clamp(0, math.max(0, points.length - 2)).toInt();
+  }
+
+  static double _remainingRouteMeters({
+    required List<Offset> points,
+    required Offset startPoint,
+    required int segmentStart,
+  }) {
+    var meters = 0.0;
+    var previous = startPoint;
+    for (var i = segmentStart + 1; i < points.length; i++) {
+      meters += _distanceMeters(previous, points[i]);
+      previous = points[i];
+    }
+    return meters;
+  }
+}
+
 class _CockpitRouteInfo {
   const _CockpitRouteInfo({
     required this.localPath,
@@ -1977,8 +2086,6 @@ class _CockpitRouteInfo {
     );
     final nearestIndex = routeMatch?.nearestIndex ?? 0;
     final firstAheadIndex = math.min(nearestIndex + 2, points.length - 1);
-    final lookAheadIndex = math.min(nearestIndex + 6, points.length - 1);
-    final maneuverIndex = math.min(nearestIndex + 12, points.length - 1);
     final mapHeading = routeMatch?.heading ??
         _bearingDegrees(
           origin,
@@ -2000,27 +2107,25 @@ class _CockpitRouteInfo {
           : _CockpitTurnCue.fromRoutePoints(routeMatch.points),
     );
 
-    final instruction = _routeInstruction(
-      origin: origin,
-      points: points,
-      lookAheadIndex: lookAheadIndex,
-      maneuverIndex: maneuverIndex,
-      fallbackPath: cockpitPath,
-    );
-
-    var metersAhead = 0.0;
-    var previous = origin;
-    for (var i = nearestIndex; i <= maneuverIndex; i++) {
-      metersAhead += _distanceMeters(previous, points[i]);
-      previous = points[i];
-    }
-
-    final metersLabel = '${metersAhead.clamp(0, 999).toStringAsFixed(0)} m';
+    final fallback = _instructionFromLocalPath(cockpitPath);
+    final instruction = _RouteManeuverInstruction.fromRoute(
+          route: route,
+          latitude: latitude,
+          longitude: longitude,
+          heading: heading,
+        ) ??
+        _RouteManeuverInstruction(
+          title: fallback.title,
+          detail: '-- m',
+          distanceLabel: '-- m',
+          icon: fallback.icon,
+          color: fallback.color,
+        );
     return _CockpitRouteInfo(
       localPath: cockpitPath,
       title: instruction.title,
       subtitle: route == null ? 'Sem rota ativa' : 'Rota ativa no painel',
-      distanceLabel: metersLabel,
+      distanceLabel: instruction.distanceLabel,
       icon: instruction.icon,
       turnColor: instruction.color,
       hasRoute: true,
@@ -2035,43 +2140,6 @@ class _CockpitRouteInfo {
     final delta = _angleDelta(mapHeading, gpsHeading);
     if (delta.abs() > 95) return mapHeading;
     return (mapHeading + delta * 0.62 + 360) % 360;
-  }
-
-  static _CockpitInstruction _routeInstruction({
-    required Offset origin,
-    required List<Offset> points,
-    required int lookAheadIndex,
-    required int maneuverIndex,
-    required List<Offset> fallbackPath,
-  }) {
-    if (maneuverIndex > lookAheadIndex) {
-      final bearingNow = _bearingDegrees(origin, points[lookAheadIndex]);
-      final bearingNext =
-          _bearingDegrees(points[lookAheadIndex], points[maneuverIndex]);
-      final delta = _angleDelta(bearingNow, bearingNext);
-      if (delta > 32) {
-        return const _CockpitInstruction(
-          title: 'Vire a direita',
-          icon: Icons.turn_right,
-          color: Color(0xFF39D8B6),
-        );
-      }
-      if (delta < -32) {
-        return const _CockpitInstruction(
-          title: 'Vire a esquerda',
-          icon: Icons.turn_left,
-          color: Color(0xFF39D8B6),
-        );
-      }
-      if (delta.abs() > 16) {
-        return _CockpitInstruction(
-          title: delta > 0 ? 'Curva a direita' : 'Curva a esquerda',
-          icon: delta > 0 ? Icons.turn_slight_right : Icons.turn_slight_left,
-          color: const Color(0xFF39D8B6),
-        );
-      }
-    }
-    return _instructionFromLocalPath(fallbackPath);
   }
 
   static List<Offset> _routeToLocalPath({
@@ -2745,6 +2813,7 @@ class _PelotasOfflineMapCard extends StatelessWidget {
     required this.active,
     required this.vehicleIcon,
     required this.route,
+    required this.localMapPreview,
     required this.onTap,
   });
 
@@ -2754,6 +2823,7 @@ class _PelotasOfflineMapCard extends StatelessWidget {
   final bool active;
   final String vehicleIcon;
   final OfflineRoute? route;
+  final bool localMapPreview;
   final VoidCallback onTap;
 
   @override
@@ -2775,17 +2845,32 @@ class _PelotasOfflineMapCard extends StatelessWidget {
                 heading: heading,
                 mapData: snapshot.data,
               );
+              final mapData = snapshot.data;
+              final showLocalMap = localMapPreview && mapData != null;
 
               return Stack(
                 children: [
                   Positioned.fill(
                     child: CustomPaint(
-                      painter: _CockpitDrivePainter(
-                        routeInfo: routeInfo,
-                        active: active,
-                        darkMode:
-                            Theme.of(context).brightness == Brightness.dark,
-                      ),
+                      painter: showLocalMap
+                          ? _PelotasMapPainter(
+                              data: mapData,
+                              latitude: latitude,
+                              longitude: longitude,
+                              heading: heading,
+                              active: active,
+                              vehicleIcon: vehicleIcon,
+                              route: route,
+                              darkMode: Theme.of(context).brightness ==
+                                  Brightness.dark,
+                              gpsLatitudeSpan: 0.00013,
+                            )
+                          : _CockpitDrivePainter(
+                              routeInfo: routeInfo,
+                              active: active,
+                              darkMode: Theme.of(context).brightness ==
+                                  Brightness.dark,
+                            ),
                     ),
                   ),
                   Positioned(
@@ -2832,11 +2917,13 @@ class _PelotasOfflineMapCard extends StatelessWidget {
                             ),
                           ),
                           child: Text(
-                            routeInfo.hasRoute
-                                ? routeInfo.distanceLabel
-                                : active
+                            showLocalMap
+                                ? 'LOCAL'
+                                : routeInfo.hasRoute
                                     ? routeInfo.distanceLabel
-                                    : 'GPS',
+                                    : active
+                                        ? routeInfo.distanceLabel
+                                        : 'GPS',
                             style: TextStyle(
                               color: active
                                   ? _HomeScreenState._green
@@ -2849,24 +2936,27 @@ class _PelotasOfflineMapCard extends StatelessWidget {
                       ],
                     ),
                   ),
-                  Align(
-                    alignment: const Alignment(0, 0.68),
-                    child: FractionallySizedBox(
-                      widthFactor: 1.0,
-                      heightFactor: 0.84,
-                      child: Image.asset(
-                        'assets/images/car_top.png',
-                        fit: BoxFit.contain,
-                        filterQuality: FilterQuality.high,
+                  if (!showLocalMap)
+                    Align(
+                      alignment: const Alignment(0, 0.68),
+                      child: FractionallySizedBox(
+                        widthFactor: 1.0,
+                        heightFactor: 0.84,
+                        child: Image.asset(
+                          'assets/images/car_top.png',
+                          fit: BoxFit.contain,
+                          filterQuality: FilterQuality.high,
+                        ),
                       ),
                     ),
-                  ),
                   Positioned(
                     left: 10,
                     bottom: 8,
                     right: 10,
                     child: Text(
-                      routeInfo.subtitle,
+                      showLocalMap
+                          ? 'Toque para abrir o mapa'
+                          : routeInfo.subtitle,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -2977,6 +3067,7 @@ class _PelotasMapPainter extends CustomPainter {
     required this.vehicleIcon,
     required this.route,
     required this.darkMode,
+    this.gpsLatitudeSpan = 0.00028,
   });
 
   final _PelotasMapData data;
@@ -2987,6 +3078,7 @@ class _PelotasMapPainter extends CustomPainter {
   final String vehicleIcon;
   final OfflineRoute? route;
   final bool darkMode;
+  final double gpsLatitudeSpan;
 
   bool get _hasGps => latitude != null && longitude != null;
 
@@ -3320,7 +3412,7 @@ class _PelotasMapPainter extends CustomPainter {
     return data.center;
   }
 
-  double get _latitudeSpan => _hasGps ? 0.00028 : 0.045;
+  double get _latitudeSpan => _hasGps ? gpsLatitudeSpan : 0.045;
 
   double get _mapRotationRadians {
     if (!_hasGps || heading == null) return 0;
@@ -3351,7 +3443,8 @@ class _PelotasMapPainter extends CustomPainter {
         oldDelegate.active != active ||
         oldDelegate.vehicleIcon != vehicleIcon ||
         oldDelegate.route != route ||
-        oldDelegate.darkMode != darkMode;
+        oldDelegate.darkMode != darkMode ||
+        oldDelegate.gpsLatitudeSpan != gpsLatitudeSpan;
   }
 }
 
@@ -4305,6 +4398,17 @@ double _distanceMeters(Offset a, Offset b) {
           (1 - math.cos((b.dx - a.dx) * p)) /
           2;
   return 12742 * math.asin(math.sqrt(hav)) * 1000;
+}
+
+String _formatRouteDistance(double meters) {
+  final safeMeters = meters.isFinite ? math.max(0, meters) : 0.0;
+  if (safeMeters < 950) {
+    return '${safeMeters.round()} m';
+  }
+
+  final km = safeMeters / 1000;
+  final digits = km >= 10 ? 0 : 1;
+  return '${km.toStringAsFixed(digits).replaceAll('.', ',')} km';
 }
 
 Offset _metersFromOrigin(Offset origin, Offset point) {
