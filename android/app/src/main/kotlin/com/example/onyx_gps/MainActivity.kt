@@ -48,6 +48,7 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "requestPermissions" -> requestBluetoothPermissions(result)
+                    "requestVoicePermission" -> requestVoicePermission(result)
                     "bluetoothStatus" -> bluetoothStatus(result)
                     "requestEnableBluetooth" -> requestEnableBluetooth(result)
                     "listPairedDevices" -> listPairedDevices(result)
@@ -109,6 +110,20 @@ class MainActivity : FlutterActivity() {
         disconnect()
         permissionResult = null
         super.onDestroy()
+    }
+
+    private fun requestVoicePermission(result: MethodChannel.Result) {
+        if (permissionResult != null) {
+            result.error("permission_busy", "Solicitacao de permissao ja em andamento", null)
+            return
+        }
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            result.success(true)
+            return
+        }
+
+        permissionResult = result
+        requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), permissionRequestCode)
     }
 
     private fun requestBluetoothPermissions(result: MethodChannel.Result) {

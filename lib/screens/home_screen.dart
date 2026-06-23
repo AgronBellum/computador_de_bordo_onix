@@ -33,6 +33,9 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _voiceAssistantBusy = false;
   VideoPlayerController? _voiceVideoController;
 
+  static const MethodChannel _nativeChannel =
+      MethodChannel('onyx_gps/obd_bluetooth');
+
   static const Color _bg = Color(0xFF020914);
   static const Color _bar = Color(0xFF050D19);
   static const Color _card = Color(0xFF061426);
@@ -578,6 +581,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
     setState(() => _voiceAssistantBusy = true);
     final speech = stt.SpeechToText();
+    final voiceStatus = ValueNotifier<String>('Preparando microfone...');
+    final recognizedPreview = ValueNotifier<String>('');
     VideoPlayerController? controller;
     var dialogOpen = false;
 
@@ -658,14 +663,42 @@ class _HomeScreenState extends State<HomeScreen> {
                             color: _blue.withValues(alpha: 0.7),
                           ),
                         ),
-                        child: const Text(
-                          'Ouvindo...',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w900,
-                            fontSize: 18,
-                          ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            ValueListenableBuilder<String>(
+                              valueListenable: voiceStatus,
+                              builder: (_, status, __) => Text(
+                                status,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 18,
+                                ),
+                              ),
+                            ),
+                            ValueListenableBuilder<String>(
+                              valueListenable: recognizedPreview,
+                              builder: (_, preview, __) => preview.isEmpty
+                                  ? const SizedBox.shrink()
+                                  : Padding(
+                                      padding: const EdgeInsets.only(top: 6),
+                                      child: Text(
+                                        preview,
+                                        textAlign: TextAlign.center,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: Colors.white
+                                              .withValues(alpha: 0.78),
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                    ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -678,15 +711,36 @@ class _HomeScreenState extends State<HomeScreen> {
       );
 
       await Future<void>.delayed(const Duration(milliseconds: 180));
-      final available = await speech.initialize(
-        onError: (_) {},
-        onStatus: (_) {},
-      );
-      if (!available) {
+      final voicePermission = await _requestVoicePermission();
+      if (!voicePermission) {
+        voiceStatus.value = 'Permissão de microfone negada';
+        await Future<void>.delayed(const Duration(milliseconds: 900));
         await answer('status');
         return;
       }
 
+      voiceStatus.value = 'Ativando reconhecimento...';
+      final available = await speech.initialize(
+        onError: (error) {
+          voiceStatus.value = 'Erro no microfone: ${error.errorMsg}';
+        },
+        onStatus: (status) {
+          if (status == 'listening') {
+            voiceStatus.value = 'Ouvindo...';
+          } else if (status == 'notListening' &&
+              recognizedPreview.value.isEmpty) {
+            voiceStatus.value = 'Não ouvi nenhum comando';
+          }
+        },
+      );
+      if (!available) {
+        voiceStatus.value = 'Reconhecimento indisponível';
+        await Future<void>.delayed(const Duration(milliseconds: 900));
+        await answer('status');
+        return;
+      }
+
+      voiceStatus.value = 'Ouvindo...';
       var recognized = '';
       final done = Completer<void>();
       try {
@@ -696,6 +750,12 @@ class _HomeScreenState extends State<HomeScreen> {
           pauseFor: const Duration(milliseconds: 900),
           onResult: (result) {
             recognized = result.recognizedWords;
+            recognizedPreview.value =
+                recognized.isEmpty ? '' : 'Entendi: $recognized';
+            if (recognized.isNotEmpty) {
+              voiceStatus.value =
+                  result.finalResult ? 'Comando entendido' : 'Ouvindo...';
+            }
             if (result.finalResult && !done.isCompleted) {
               done.complete();
             }
@@ -707,17 +767,34 @@ class _HomeScreenState extends State<HomeScreen> {
           onTimeout: () {},
         );
       } catch (_) {
+        voiceStatus.value = 'Falha ao ouvir comando';
         recognized = '';
       } finally {
         await speech.stop();
       }
 
+      if (recognized.trim().isEmpty) {
+        voiceStatus.value = 'Não entendi, respondendo status';
+        await Future<void>.delayed(const Duration(milliseconds: 650));
+      }
       await answer(recognized.trim().isEmpty ? 'status' : recognized);
     } finally {
       await closeDialog();
+      voiceStatus.dispose();
+      recognizedPreview.dispose();
       if (mounted) {
         setState(() => _voiceAssistantBusy = false);
       }
+    }
+  }
+
+  Future<bool> _requestVoicePermission() async {
+    try {
+      return await _nativeChannel
+              .invokeMethod<bool>('requestVoicePermission') ??
+          false;
+    } catch (_) {
+      return false;
     }
   }
 
