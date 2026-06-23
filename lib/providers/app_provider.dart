@@ -45,6 +45,7 @@ class AppProvider extends ChangeNotifier {
   Timer? _gpsWatchdogTimer;
   Timer? _smartGpsStartTimer;
   DateTime? _lastGpsPositionAt;
+  DateTime? _lastGpsUiNotifyAt;
   double _cityConsumption = 9.0;
   double _tripConsumption = 12.0;
   double _fuelPrice = 5.79;
@@ -52,6 +53,10 @@ class AppProvider extends ChangeNotifier {
   String _drivingMode = 'city';
   String _vehicleName = 'ONIX';
   String _mapVehicleIcon = 'arrow';
+  double? _oilLastChangeKm;
+  double? _oilNextChangeKm;
+  bool _oilFilterChanged = false;
+  String _oilType = '';
   OfflineRoute? _activeNavigationRoute;
   MapDestination? _activeNavigationDestination;
 
@@ -82,6 +87,10 @@ class AppProvider extends ChangeNotifier {
   String get drivingMode => _drivingMode;
   String get vehicleName => _vehicleName;
   String get mapVehicleIcon => _mapVehicleIcon;
+  double? get oilLastChangeKm => _oilLastChangeKm;
+  double? get oilNextChangeKm => _oilNextChangeKm;
+  bool get oilFilterChanged => _oilFilterChanged;
+  String get oilType => _oilType;
   OfflineRoute? get activeNavigationRoute => _activeNavigationRoute;
   MapDestination? get activeNavigationDestination =>
       _activeNavigationDestination;
@@ -91,6 +100,24 @@ class AppProvider extends ChangeNotifier {
   double? get lastRemainingFuel => _lastRemainingFuel;
   double? get lastOdometer => _lastOdometer;
   double? get lastConsumption => _lastConsumption;
+  double? get oilKmRemaining {
+    if (_oilNextChangeKm == null || _activeTrip == null) return null;
+    return _oilNextChangeKm! - _activeTrip!.currentOdometer;
+  }
+
+  bool get hasOilChangeInfo =>
+      _oilLastChangeKm != null && _oilNextChangeKm != null;
+
+  bool get isOilChangeDue {
+    final remaining = oilKmRemaining;
+    return remaining != null && remaining <= 0;
+  }
+
+  bool get isOilChangeNear {
+    final remaining = oilKmRemaining;
+    if (remaining == null) return false;
+    return remaining > 0 && remaining <= 500;
+  }
 
   double get fuelPercentage {
     if (_activeTrip == null) return 0;
@@ -142,6 +169,31 @@ class AppProvider extends ChangeNotifier {
     _drivingMode = prefs.getString('driving_mode') ?? 'city';
     _vehicleName = prefs.getString('vehicle_name') ?? 'ONIX';
     _mapVehicleIcon = prefs.getString('map_vehicle_icon') ?? 'arrow';
+    _oilLastChangeKm = prefs.getDouble('oil_last_change_km');
+    _oilNextChangeKm = prefs.getDouble('oil_next_change_km');
+    _oilFilterChanged = prefs.getBool('oil_filter_changed') ?? false;
+    _oilType = prefs.getString('oil_type') ?? '';
+  }
+
+  Future<void> saveOilChange({
+    required double lastChangeKm,
+    required double nextChangeKm,
+    required bool filterChanged,
+    required String oilType,
+  }) async {
+    _oilLastChangeKm = lastChangeKm;
+    _oilNextChangeKm = nextChangeKm;
+    _oilFilterChanged = filterChanged;
+    _oilType = oilType.trim();
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('oil_last_change_km', _oilLastChangeKm!);
+    await prefs.setDouble('oil_next_change_km', _oilNextChangeKm!);
+    await prefs.setBool('oil_filter_changed', _oilFilterChanged);
+    await prefs.setString('oil_type', _oilType);
+
+    _statusMessage = 'Troca de óleo salva';
+    notifyListeners();
   }
 
   Future<void> saveDashboardSettings({
@@ -381,6 +433,7 @@ class AppProvider extends ChangeNotifier {
     if (_activeTrip != null) {
       _gps.stopTracking();
       _isGpsTracking = false;
+      _lastGpsUiNotifyAt = null;
 
       await _saveRefuelData();
       await _db.endTrip(_activeTrip!.id!);
@@ -461,7 +514,7 @@ class AppProvider extends ChangeNotifier {
     if (_activeTrip == null) return;
 
     if (newOdometer < _activeTrip!.currentOdometer) {
-      _statusMessage = 'KM não pode ser menor que o atual';
+      _statusMessage = 'KM nÃ£o pode ser menor que o atual';
       notifyListeners();
       return;
     }
@@ -502,7 +555,7 @@ class AppProvider extends ChangeNotifier {
     await _db.updateTrip(_activeTrip!);
     await _saveRefuelData();
 
-    _statusMessage = 'Combustivel ajustado: ${liters.toStringAsFixed(1)}L';
+    _statusMessage = 'Combustível ajustado: ${liters.toStringAsFixed(1)}L';
     notifyListeners();
     await _checkFuelLevelAlerts();
   }
@@ -526,7 +579,7 @@ class AppProvider extends ChangeNotifier {
     await _saveLastOdometer(_activeTrip!.currentOdometer);
     await _saveRefuelData();
 
-    _statusMessage = 'Distancia ajustada: ${distanceKm.toStringAsFixed(1)}km';
+    _statusMessage = 'Distância ajustada: ${distanceKm.toStringAsFixed(1)}km';
     notifyListeners();
     await _checkDashboardAudioAlerts();
     await _restartGpsTrackingFromCurrentTrip();
@@ -562,7 +615,7 @@ class AppProvider extends ChangeNotifier {
     final hasPermission = await _gps.requestPermission();
 
     if (!hasPermission) {
-      _statusMessage = 'Permissão de GPS negada - verifique configurações';
+      _statusMessage = 'PermissÃ£o de GPS negada - verifique configuraÃ§Ãµes';
       notifyListeners();
       return;
     }
@@ -572,7 +625,7 @@ class AppProvider extends ChangeNotifier {
     if (initialPos == null) {
       _statusMessage = automatic
           ? 'GPS ainda sem sinal - toque para iniciar quando estiver pronto'
-          : 'GPS indisponivel - aguardando sinal...';
+          : 'GPS indisponível - aguardando sinal...';
       notifyListeners();
       return;
     }
@@ -608,14 +661,16 @@ class AppProvider extends ChangeNotifier {
         _lastGpsPositionAt = DateTime.now();
         _checkNavigationArrival(position.latitude, position.longitude);
         if (_gpsRawPositionCount == 1) {
-          _statusMessage = 'GPS recebendo posicoes: $_gpsRawPositionCount';
-          notifyListeners();
+          _statusMessage = 'GPS recebendo posições: $_gpsRawPositionCount';
+          _notifyGpsUi(force: true);
+        } else {
+          _notifyGpsUi();
         }
       },
       onMovementMeasured: (position, movementMeters) {
         _lastGpsMovementMeters = movementMeters;
         if (_gpsRawPositionCount % 5 == 0) {
-          _statusMessage = 'GPS recebendo posicoes: $_gpsRawPositionCount';
+          _statusMessage = 'GPS recebendo posições: $_gpsRawPositionCount';
           notifyListeners();
         }
       },
@@ -626,7 +681,7 @@ class AppProvider extends ChangeNotifier {
         _lastGpsLatitude = position.latitude;
         _lastGpsLongitude = position.longitude;
         _statusMessage = 'GPS ignorou ponto: $reason';
-        notifyListeners();
+        _notifyGpsUi(force: true);
       },
       onStopped: () {
         _handleGpsStopped();
@@ -653,7 +708,7 @@ class AppProvider extends ChangeNotifier {
 
         _statusMessage = 'GPS: +${deltaKm.toStringAsFixed(3)}km | '
             'Total: ${_activeTrip!.distanceTraveled.toStringAsFixed(1)}km | '
-            'Atualizacoes: $_gpsUpdateCount';
+            'Atualizações: $_gpsUpdateCount';
 
         await _db.updateTrip(_activeTrip!);
         await _saveLastOdometer(newOdometer);
@@ -691,6 +746,8 @@ class AppProvider extends ChangeNotifier {
     _lastGpsLatitude = null;
     _lastGpsLongitude = null;
     _lastGpsHeading = null;
+    _lastGpsPositionAt = null;
+    _lastGpsUiNotifyAt = null;
     _suppressNextGpsConnectedAudio = true;
 
     await startGpsTracking();
@@ -711,6 +768,7 @@ class AppProvider extends ChangeNotifier {
     _lastGpsLongitude = null;
     _lastGpsHeading = null;
     _lastGpsPositionAt = null;
+    _lastGpsUiNotifyAt = null;
     _suppressNextGpsConnectedAudio = false;
     _statusMessage = 'Reconectando GPS...';
     notifyListeners();
@@ -747,6 +805,18 @@ class AppProvider extends ChangeNotifier {
     return (bearing + 360) % 360;
   }
 
+  void _notifyGpsUi({bool force = false}) {
+    final now = DateTime.now();
+    final last = _lastGpsUiNotifyAt;
+    if (!force &&
+        last != null &&
+        now.difference(last) < const Duration(milliseconds: 220)) {
+      return;
+    }
+    _lastGpsUiNotifyAt = now;
+    notifyListeners();
+  }
+
   void _checkNavigationArrival(double lat, double lon) {
     final destination = _activeNavigationDestination;
     if (destination == null || _activeNavigationRoute == null) return;
@@ -780,7 +850,7 @@ class AppProvider extends ChangeNotifier {
 
       final silence = DateTime.now().difference(lastPositionAt);
       if (silence.inSeconds >= 90) {
-        _statusMessage = 'GPS ativo, mas sem novas posicoes ha '
+        _statusMessage = 'GPS ativo, mas sem novas posições ha '
             '${silence.inSeconds}s';
         notifyListeners();
       }
@@ -791,8 +861,9 @@ class AppProvider extends ChangeNotifier {
     if (!_isGpsTracking) return;
 
     _isGpsTracking = false;
+    _lastGpsUiNotifyAt = null;
     _statusMessage = _gpsStoppedByUser
-        ? 'GPS pausado pelo usuario'
+        ? 'GPS pausado pelo usuário'
         : 'GPS parou - tentando iniciar novamente em alguns segundos';
     notifyListeners();
 
@@ -919,6 +990,7 @@ class AppProvider extends ChangeNotifier {
     }
 
     _isGpsTracking = false;
+    _lastGpsUiNotifyAt = null;
     _statusMessage =
         'GPS pausado - percorrido: ${_gpsDistance.toStringAsFixed(0)}m';
 
@@ -936,6 +1008,7 @@ class AppProvider extends ChangeNotifier {
 
     _gps.stopTracking();
     _isGpsTracking = false;
+    _lastGpsUiNotifyAt = null;
     _gpsWatchdogTimer?.cancel();
     _smartGpsStartTimer?.cancel();
 

@@ -4,9 +4,12 @@ import 'package:provider/provider.dart';
 
 import 'providers/app_provider.dart';
 import 'screens/add_fuel_screen.dart';
+import 'screens/bluetooth_lab_screen.dart';
+import 'screens/computer_screen.dart';
 import 'screens/history_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/offline_map_screen.dart';
+import 'services/obd_background_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -32,12 +35,16 @@ class CarFuelApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (_) => AppProvider(),
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => AppProvider()),
+        ChangeNotifierProvider.value(value: ObdBackgroundService.instance)
+      ],
       child: Consumer<AppProvider>(
         builder: (context, provider, child) {
+          ObdBackgroundService.instance.ensureStarted();
           return MaterialApp(
-            title: 'Combustivel',
+            title: 'Combustível',
             debugShowCheckedModeBanner: false,
             themeMode: provider.isDarkMode ? ThemeMode.dark : ThemeMode.light,
             darkTheme: _buildTheme(Brightness.dark),
@@ -46,6 +53,8 @@ class CarFuelApp extends StatelessWidget {
             routes: {
               '/': (context) => const HomeScreen(),
               '/addFuel': (context) => const AddFuelScreen(),
+              '/bluetoothLab': (context) => const BluetoothLabScreen(),
+              '/computer': (context) => const ComputerScreen(),
               '/history': (context) => const HistoryScreen(),
               '/offlineMap': (context) => const OfflineMapScreen(),
             },

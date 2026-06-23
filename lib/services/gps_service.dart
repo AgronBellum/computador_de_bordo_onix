@@ -81,9 +81,9 @@ class GpsService {
 
     final locationSettings = AndroidSettings(
       accuracy: LocationAccuracy.bestForNavigation,
-      distanceFilter: 5,
+      distanceFilter: 1,
       forceLocationManager: true,
-      foregroundNotificationConfig: ForegroundNotificationConfig(
+      foregroundNotificationConfig: const ForegroundNotificationConfig(
         notificationTitle: 'Computador de bordo ativo',
         notificationText: 'Calculando consumo, distancia e autonomia via GPS.',
         enableWakeLock: true,

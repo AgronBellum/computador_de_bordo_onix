@@ -62,7 +62,7 @@ class TripModel {
   }
 
   void updateFromGps(double newOdometer, double lat, double lng) {
-    if (newOdometer > currentOdometer) {
+    if (newOdometer >= currentOdometer) {
       final delta = newOdometer - currentOdometer;
 
       distanceTraveled += delta;
@@ -83,7 +83,7 @@ class TripModel {
   }
 
   void updateFromManualOdometer(double newOdometer) {
-    if (newOdometer > currentOdometer) {
+    if (newOdometer >= currentOdometer) {
       final delta = newOdometer - currentOdometer;
 
       distanceTraveled += delta;

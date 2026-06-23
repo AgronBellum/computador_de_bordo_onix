@@ -35,6 +35,8 @@ class _HomeScreenState extends State<HomeScreen> {
   static const Color _card2 = Color(0xFF020B17);
   static const Color _blue = Color(0xFF1677FF);
   static const Color _green = Color(0xFF69F01B);
+  static const Color _amber = Color(0xFFFFC857);
+  static const Color _oilDue = Color(0xFFFF5A1F);
   static const Color _purple = Color(0xFFB7A2E8);
   static const Color _line = Color(0xFF0B3C73);
 
@@ -269,14 +271,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       children: [
                         Expanded(
                           flex: 27,
-                          child: _ActionCard(
-                            icon: Icons.local_gas_station,
-                            title: 'ABASTECER',
-                            subtitle: 'Registrar abastecimento',
-                            color: _green,
-                            onTap: () =>
-                                Navigator.pushNamed(context, '/addFuel'),
-                          ),
+                          child: _buildFuelOilActions(provider),
                         ),
                         SizedBox(width: gap),
                         Expanded(
@@ -338,152 +333,118 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Container(
       height: compactHeader ? 62 : 74,
-      padding: EdgeInsets.symmetric(horizontal: compactHeader ? 12 : 22),
-      decoration: BoxDecoration(
-        color: colors.bar,
-        border: Border(
-          bottom: BorderSide(color: _line.withValues(alpha: 0.75)),
-        ),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            Icons.directions_car_filled,
-            color: _blue,
-            size: compactHeader ? 32 : 42,
+      padding: EdgeInsets.fromLTRB(compactHeader ? 10 : 18,
+          compactHeader ? 7 : 10, compactHeader ? 10 : 18, 0),
+      color: colors.background,
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: compactHeader ? 14 : 20),
+        decoration: ShapeDecoration(
+          color: colors.card.withValues(alpha: 0.94),
+          shape: StadiumBorder(
+            side: BorderSide(color: _line.withValues(alpha: 0.82), width: 1.2),
           ),
-          SizedBox(width: compactHeader ? 10 : 16),
-          Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                provider.vehicleName,
+          shadows: [
+            BoxShadow(
+              color: _blue.withValues(alpha: 0.13),
+              blurRadius: 20,
+              spreadRadius: 1,
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.circle,
+                color: provider.isGpsTracking ? _green : Colors.orangeAccent,
+                size: 12),
+            SizedBox(width: compactHeader ? 7 : 9),
+            Text(
+              provider.isGpsTracking ? 'GPS ATIVO' : 'GPS OFFLINE',
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: provider.isGpsTracking ? _green : Colors.orangeAccent,
+                fontSize: compactHeader ? 13 : 14,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            SizedBox(width: compactHeader ? 8 : 12),
+            _HeaderGpsButton(
+              active: provider.isGpsTracking,
+              onTap: provider.isGpsTracking
+                  ? provider.stopGpsTracking
+                  : provider.startGpsTracking,
+              compact: compactHeader,
+            ),
+            const Spacer(),
+            Container(
+              width: compactHeader ? 46 : 54,
+              height: compactHeader ? 24 : 30,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(4),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFFC99A28).withValues(alpha: 0.18),
+                    blurRadius: 14,
+                    spreadRadius: 1,
+                  ),
+                ],
+              ),
+              child: Image.asset(
+                'assets/images/chevrolet_logo_transparent.png',
+                fit: BoxFit.contain,
+                filterQuality: FilterQuality.high,
+              ),
+            ),
+            SizedBox(width: compactHeader ? 10 : 14),
+            Flexible(
+              flex: 2,
+              child: Text(
+                provider.vehicleName.toUpperCase(),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: colors.primaryText,
-                  fontSize: compactHeader ? 18 : 25,
-                  fontWeight: FontWeight.w900,
+                  fontWeight: FontWeight.w800,
+                  fontSize: compactHeader ? 15 : 16,
                 ),
               ),
-              if (!compactHeader) ...[
-                const SizedBox(height: 2),
-                Text(
-                  'COMPUTADOR DE BORDO',
-                  style: TextStyle(color: colors.secondaryText, fontSize: 14),
-                ),
-              ],
-            ],
-          ),
-          SizedBox(width: compactHeader ? 12 : 0),
-          if (!compactHeader) const Spacer(),
-          Icon(
-            Icons.circle,
-            color: provider.isGpsTracking ? _green : Colors.orangeAccent,
-            size: compactHeader ? 10 : 14,
-          ),
-          SizedBox(width: compactHeader ? 6 : 14),
-          Flexible(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  provider.isGpsTracking ? 'GPS ATIVO' : 'GPS OFFLINE',
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color:
-                        provider.isGpsTracking ? _green : Colors.orangeAccent,
-                    fontSize: compactHeader ? 13 : 18,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                if (!compactHeader)
-                  Text(
-                    provider.isGpsTracking
-                        ? 'Rastreamento automatico em segundo plano'
-                        : 'GPS automatico aguardando permissao/sinal',
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: colors.primaryText, fontSize: 13),
-                  ),
-              ],
             ),
-          ),
-          SizedBox(width: compactHeader ? 8 : 12),
-          _HeaderGpsButton(
-            active: provider.isGpsTracking,
-            onTap: provider.isGpsTracking
-                ? provider.stopGpsTracking
-                : provider.startGpsTracking,
-            compact: compactHeader,
-          ),
-          if (!compactHeader) const Spacer(),
-          InkWell(
-            borderRadius: BorderRadius.circular(24),
-            onTap: provider.toggleThemeMode,
-            child: _RoundStatusIcon(
-              icon: provider.isDarkMode ? Icons.dark_mode : Icons.light_mode,
-              color: colors.primaryText,
-              size: compactHeader ? 38 : 48,
-            ),
-          ),
-          if (!compactHeader) ...[
-            const SizedBox(width: 12),
-            InkWell(
-              borderRadius: BorderRadius.circular(8),
-              onTap: provider.toggleThemeMode,
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    provider.isDarkMode ? 'MODO ESCURO' : 'MODO CLARO',
-                    style: TextStyle(color: colors.primaryText, fontSize: 14),
-                  ),
-                  Text(
-                    'Toque para mudar',
-                    style: TextStyle(color: colors.primaryText, fontSize: 13),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 34),
-            Container(width: 1, height: 38, color: _line),
-            const SizedBox(width: 26),
+            const Spacer(),
             IconButton(
-              onPressed: () => _showSettingsDialog(context, provider),
-              icon: Icon(Icons.settings, color: colors.secondaryIcon, size: 34),
-            ),
-            const SizedBox(width: 26),
-          ] else ...[
-            const SizedBox(width: 8),
-            IconButton(
-              onPressed: () => _showSettingsDialog(context, provider),
-              icon: Icon(Icons.settings, color: colors.secondaryIcon, size: 28),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(
-                minWidth: 36,
-                minHeight: 36,
+              tooltip: provider.isDarkMode ? 'Modo claro' : 'Modo escuro',
+              onPressed: provider.toggleThemeMode,
+              icon: Icon(
+                provider.isDarkMode ? Icons.dark_mode : Icons.light_mode,
+                color: colors.secondaryIcon,
+                size: compactHeader ? 23 : 25,
               ),
             ),
-            const SizedBox(width: 4),
+            IconButton(
+              tooltip: 'ConfiguraÃ§Ãµes',
+              onPressed: () => _showSettingsDialog(context, provider),
+              icon: Icon(Icons.settings,
+                  color: colors.secondaryIcon, size: compactHeader ? 23 : 25),
+            ),
+            Icon(Icons.schedule,
+                color: colors.secondaryText, size: compactHeader ? 18 : 19),
+            SizedBox(width: compactHeader ? 6 : 8),
+            Text(
+              _formatTime(_now),
+              style: TextStyle(
+                color: colors.secondaryText,
+                fontSize: 14,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
           ],
-          Text(
-            _formatTime(_now),
-            style: TextStyle(
-              color: colors.primaryText,
-              fontSize: compactHeader ? 22 : 30,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
 
   Widget _buildEmptyState(BuildContext context, BoxConstraints constraints) {
     final colors = _DashboardColors.of(context);
+    final provider = context.watch<AppProvider>();
     final compact = constraints.maxWidth < 760 || constraints.maxHeight < 360;
     final panelWidth = math
         .min(
@@ -541,15 +502,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   ],
                   SizedBox(height: compact ? 10 : 20),
                   SizedBox(
-                    width: compact ? 220 : 260,
+                    width: compact ? 300 : 380,
                     height: compact ? 54 : 86,
-                    child: _ActionCard(
-                      icon: Icons.add,
-                      title: 'ABASTECER',
-                      subtitle: 'Iniciar computador de bordo',
-                      color: _green,
-                      onTap: () => Navigator.pushNamed(context, '/addFuel'),
-                    ),
+                    child: _buildFuelOilActions(provider),
                   ),
                 ],
               ),
@@ -558,6 +513,49 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
     );
+  }
+
+  Widget _buildFuelOilActions(AppProvider provider) {
+    return Row(
+      children: [
+        Expanded(
+          child: _ActionCard(
+            icon: Icons.local_gas_station,
+            title: 'ABASTECER',
+            subtitle: 'Registrar abastecimento',
+            color: _green,
+            onTap: () => Navigator.pushNamed(context, '/addFuel'),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: _ActionCard(
+            icon: Icons.oil_barrel,
+            title: 'Ã“LEO',
+            subtitle: _oilActionSubtitle(provider),
+            color: _oilActionColor(provider),
+            onTap: () => _showOilChangeDialog(context, provider),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Color _oilActionColor(AppProvider provider) {
+    if (provider.isOilChangeDue) return _oilDue;
+    if (provider.isOilChangeNear) return _amber;
+    return provider.hasOilChangeInfo ? _green : _blue;
+  }
+
+  String _oilActionSubtitle(AppProvider provider) {
+    if (!provider.hasOilChangeInfo) return 'Registrar troca';
+    final remaining = provider.oilKmRemaining;
+    if (remaining == null) {
+      return 'Prox. ${provider.oilNextChangeKm!.toStringAsFixed(0)} km';
+    }
+    if (remaining <= 0) return 'Troca vencida';
+    if (remaining <= 500) return 'Faltam ${remaining.toStringAsFixed(0)} km';
+    return 'Prox. ${provider.oilNextChangeKm!.toStringAsFixed(0)} km';
   }
 
   Widget _buildBottomNav(BuildContext context) {
@@ -582,9 +580,9 @@ class _HomeScreenState extends State<HomeScreen> {
               onTap: () {},
             ),
             _NavItem(
-              icon: Icons.calendar_month,
-              label: 'HISTORICO',
-              onTap: () => Navigator.pushReplacementNamed(context, '/history'),
+              icon: Icons.memory,
+              label: 'COMPUTADOR',
+              onTap: () => Navigator.pushReplacementNamed(context, '/computer'),
             ),
             _NavItem(
               icon: Icons.location_city,
@@ -644,6 +642,146 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _showOilChangeDialog(
+    BuildContext context,
+    AppProvider provider,
+  ) async {
+    final currentKm = provider.activeTrip?.currentOdometer ??
+        provider.oilLastChangeKm ??
+        provider.lastOdometer ??
+        0.0;
+    final lastController = TextEditingController(
+      text: (provider.oilLastChangeKm ?? currentKm)
+          .toStringAsFixed(0)
+          .replaceAll('.', ','),
+    );
+    final nextController = TextEditingController(
+      text: (provider.oilNextChangeKm ?? currentKm + 10000)
+          .toStringAsFixed(0)
+          .replaceAll('.', ','),
+    );
+    final typeController = TextEditingController(
+      text: provider.oilType.isEmpty ? '5W30' : provider.oilType,
+    );
+    var filterChanged = provider.oilFilterChanged;
+    String? error;
+
+    double? parseKm(TextEditingController controller) =>
+        double.tryParse(controller.text.trim().replaceAll(',', '.'));
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Troca de Ã³leo'),
+              content: SizedBox(
+                width: 420,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
+                        controller: lastController,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        decoration: const InputDecoration(
+                          labelText: 'KM da troca',
+                          prefixIcon: Icon(Icons.route),
+                          suffixText: 'km',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: nextController,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        decoration: const InputDecoration(
+                          labelText: 'KM da prÃ³xima troca',
+                          prefixIcon: Icon(Icons.flag),
+                          suffixText: 'km',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: typeController,
+                        textCapitalization: TextCapitalization.characters,
+                        decoration: const InputDecoration(
+                          labelText: 'Tipo de Ã³leo',
+                          hintText: 'Ex: 5W30, 5W40, 10W40',
+                          prefixIcon: Icon(Icons.oil_barrel),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Filtro de Ã³leo trocado'),
+                        value: filterChanged,
+                        onChanged: (value) =>
+                            setDialogState(() => filterChanged = value),
+                      ),
+                      if (error != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          error!,
+                          style: const TextStyle(
+                            color: _oilDue,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('CANCELAR'),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    final lastKm = parseKm(lastController);
+                    final nextKm = parseKm(nextController);
+                    if (lastKm == null || nextKm == null || lastKm < 0) {
+                      setDialogState(
+                          () => error = 'Informe os KM corretamente');
+                      return;
+                    }
+                    if (nextKm < lastKm) {
+                      setDialogState(
+                        () =>
+                            error = 'A prÃ³xima troca deve ser maior ou igual',
+                      );
+                      return;
+                    }
+
+                    await provider.saveOilChange(
+                      lastChangeKm: lastKm,
+                      nextChangeKm: nextKm,
+                      filterChanged: filterChanged,
+                      oilType: typeController.text,
+                    );
+
+                    if (dialogContext.mounted) {
+                      Navigator.pop(dialogContext);
+                    }
+                  },
+                  child: const Text('SALVAR'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    lastController.dispose();
+    nextController.dispose();
+    typeController.dispose();
   }
 
   void _showNumberEditDialog({
@@ -756,7 +894,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
-                      'Configuracoes',
+                      'ConfiguraÃ§Ãµes',
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.w700,
@@ -785,7 +923,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                       Theme.of(context).colorScheme.onSurface,
                                 ),
                                 decoration: const InputDecoration(
-                                  labelText: 'Nome do veiculo',
+                                  labelText: 'Nome do veículo',
                                   prefixIcon: Icon(Icons.directions_car_filled),
                                 ),
                               ),
@@ -911,6 +1049,18 @@ class _HomeScreenState extends State<HomeScreen> {
                                       _showMapDownloadDialog(context),
                                   icon: const Icon(Icons.map),
                                   label: const Text('MAPAS OFFLINE'),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              SizedBox(
+                                width: double.infinity,
+                                child: OutlinedButton.icon(
+                                  onPressed: () {
+                                    closeDialog();
+                                    Navigator.pushNamed(context, '/history');
+                                  },
+                                  icon: const Icon(Icons.history),
+                                  label: const Text('HISTORICO'),
                                 ),
                               ),
                             ],
@@ -1084,7 +1234,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               : () async {
                                   setDialogState(() {
                                     busy = true;
-                                    message = 'Buscando pais...';
+                                    message = 'Buscando paÃ­s...';
                                   });
                                   try {
                                     final result =
@@ -1101,13 +1251,13 @@ class _HomeScreenState extends State<HomeScreen> {
                                       selectedCity = null;
                                       busy = false;
                                       message = result.isEmpty
-                                          ? 'Nenhum pais encontrado.'
-                                          : 'Escolha o pais.';
+                                          ? 'Nenhum paÃ­s encontrado.'
+                                          : 'Escolha o paÃ­s.';
                                     });
                                   } catch (_) {
                                     setDialogState(() {
                                       busy = false;
-                                      message = 'Falha ao buscar pais.';
+                                      message = 'Falha ao buscar paÃ­s.';
                                     });
                                   }
                                 },
@@ -1304,7 +1454,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             setDialogState(() {
                               busy = false;
                               message =
-                                  'Nao foi possivel baixar. Verifique a internet e tente novamente.';
+                                  'NÃ£o foi possÃ­vel baixar. Verifique a internet e tente novamente.';
                             });
                           }
                         },
@@ -1365,7 +1515,7 @@ class _HomeScreenState extends State<HomeScreen> {
             if (!dialogContext.mounted) return;
             setDialogState(() {
               loading = false;
-              message = 'Nao foi possivel carregar favoritos.';
+              message = 'NÃ£o foi possÃ­vel carregar favoritos.';
             });
           }
         }
@@ -1395,7 +1545,7 @@ class _HomeScreenState extends State<HomeScreen> {
             if (!dialogContext.mounted) return;
             setDialogState(() {
               routing = false;
-              message = 'Nao foi possivel carregar o mapa offline.';
+              message = 'NÃ£o foi possÃ­vel carregar o mapa offline.';
             });
             return;
           }
@@ -1418,7 +1568,7 @@ class _HomeScreenState extends State<HomeScreen> {
           setDialogState(() {
             routing = false;
             message = route == null
-                ? 'Rota indisponivel neste mapa offline.'
+                ? 'Rota indisponÃ­vel neste mapa offline.'
                 : 'Rota para ${place.name} ativa.';
           });
 
@@ -1440,7 +1590,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
             final instruction = _dashboardRouteInstruction(provider);
             return AlertDialog(
-              title: const Text('Navegacao'),
+              title: const Text('NavegaÃ§Ã£o'),
               content: SizedBox(
                 width: 520,
                 child: Column(
@@ -2640,6 +2790,7 @@ class _CockpitDrivePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     _drawRoad(canvas, size);
+    _drawMotionLines(canvas, size);
     _drawRoute(canvas, size);
   }
 
@@ -2663,6 +2814,37 @@ class _CockpitDrivePainter extends CustomPainter {
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round;
     _drawOffsetPath(canvas, size, centerPath, 0, lanePaint);
+  }
+
+  void _drawMotionLines(Canvas canvas, Size size) {
+    final glowPaint = Paint()
+      ..color = _renderSafeCyan.withValues(alpha: active ? 0.18 : 0.08)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.3
+      ..strokeCap = StrokeCap.round;
+    final dashPaint = Paint()
+      ..color = Colors.white.withValues(alpha: darkMode ? 0.18 : 0.24)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2
+      ..strokeCap = StrokeCap.round;
+
+    for (final side in const [-1.0, 1.0]) {
+      for (var i = 0; i < 4; i++) {
+        final startForward = 24.0 + i * 34;
+        final lateral = side * (34.0 + i * 3.6);
+        final start = _project(Offset(lateral, startForward), size);
+        final end =
+            _project(Offset(lateral + side * 6, startForward + 24), size);
+        canvas.drawLine(start, end, glowPaint);
+      }
+    }
+
+    for (var i = 0; i < 5; i++) {
+      final forward = 18.0 + i * 28;
+      final start = _project(Offset(0, forward), size);
+      final end = _project(Offset(0, forward + 12), size);
+      canvas.drawLine(start, end, dashPaint);
+    }
   }
 
   void _drawRoadCone(Canvas canvas, Size size, List<Offset> centerPath) {
@@ -2805,7 +2987,7 @@ class _CockpitDrivePainter extends CustomPainter {
 
 final Future<_PelotasMapData> _pelotasMapDataFuture = _PelotasMapData.load();
 
-class _PelotasOfflineMapCard extends StatelessWidget {
+class _PelotasOfflineMapCard extends StatefulWidget {
   const _PelotasOfflineMapCard({
     required this.latitude,
     required this.longitude,
@@ -2827,26 +3009,152 @@ class _PelotasOfflineMapCard extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
+  State<_PelotasOfflineMapCard> createState() => _PelotasOfflineMapCardState();
+}
+
+class _PelotasOfflineMapCardState extends State<_PelotasOfflineMapCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  double? _fromLatitude;
+  double? _fromLongitude;
+  double? _fromHeading;
+  double? _toLatitude;
+  double? _toLongitude;
+  double? _toHeading;
+  double? _displayLatitude;
+  double? _displayLongitude;
+  double? _displayHeading;
+
+  @override
+  void initState() {
+    super.initState();
+    _displayLatitude = widget.latitude;
+    _displayLongitude = widget.longitude;
+    _displayHeading = widget.heading;
+    _toLatitude = widget.latitude;
+    _toLongitude = widget.longitude;
+    _toHeading = widget.heading;
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    )..addListener(_updateDisplayPosition);
+  }
+
+  @override
+  void didUpdateWidget(covariant _PelotasOfflineMapCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_positionChanged(oldWidget)) return;
+
+    _fromLatitude = _displayLatitude ?? oldWidget.latitude;
+    _fromLongitude = _displayLongitude ?? oldWidget.longitude;
+    _fromHeading = _displayHeading ?? oldWidget.heading;
+    final filteredTarget = _filteredTarget(widget.latitude, widget.longitude);
+    _toLatitude = filteredTarget?.dy;
+    _toLongitude = filteredTarget?.dx;
+    _toHeading = _filteredHeading(widget.heading);
+
+    if (_fromLatitude == null ||
+        _fromLongitude == null ||
+        _toLatitude == null ||
+        _toLongitude == null) {
+      _displayLatitude = widget.latitude;
+      _displayLongitude = widget.longitude;
+      _displayHeading = widget.heading;
+      return;
+    }
+
+    _controller.forward(from: 0);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  bool _positionChanged(_PelotasOfflineMapCard oldWidget) {
+    return oldWidget.latitude != widget.latitude ||
+        oldWidget.longitude != widget.longitude ||
+        oldWidget.heading != widget.heading;
+  }
+
+  void _updateDisplayPosition() {
+    final t = Curves.easeOutCubic.transform(_controller.value);
+    final fromLat = _fromLatitude;
+    final fromLon = _fromLongitude;
+    final toLat = _toLatitude;
+    final toLon = _toLongitude;
+    if (fromLat == null || fromLon == null || toLat == null || toLon == null) {
+      return;
+    }
+
+    setState(() {
+      _displayLatitude = _lerpDouble(fromLat, toLat, t);
+      _displayLongitude = _lerpDouble(fromLon, toLon, t);
+      _displayHeading = _lerpHeading(_fromHeading, _toHeading, t);
+    });
+  }
+
+  double _lerpDouble(double a, double b, double t) => a + (b - a) * t;
+
+  Offset? _filteredTarget(double? latitude, double? longitude) {
+    if (latitude == null || longitude == null) return null;
+    final raw = Offset(longitude, latitude);
+    final previousLat = _displayLatitude;
+    final previousLon = _displayLongitude;
+    if (previousLat == null || previousLon == null) return raw;
+
+    final previous = Offset(previousLon, previousLat);
+    final meters = _distanceMeters(previous, raw);
+    if (meters < 2.2) return previous;
+    if (meters > 75) return raw;
+
+    final blend = meters < 14 ? 0.58 : 0.78;
+    return Offset(
+      previous.dx + (raw.dx - previous.dx) * blend,
+      previous.dy + (raw.dy - previous.dy) * blend,
+    );
+  }
+
+  double? _filteredHeading(double? heading) {
+    final previous = _displayHeading;
+    if (heading == null || previous == null) return heading ?? previous;
+    final delta = ((heading - previous + 540) % 360) - 180;
+    if (delta.abs() < 2.5) return previous;
+    return (previous + delta * 0.72 + 360) % 360;
+  }
+
+  double? _lerpHeading(double? from, double? to, double t) {
+    if (from == null) return to;
+    if (to == null) return from;
+    final delta = ((to - from + 540) % 360) - 180;
+    return (from + delta * t + 360) % 360;
+  }
+
+  @override
   Widget build(BuildContext context) {
     final colors = _DashboardColors.of(context);
+    final latitude = _displayLatitude ?? widget.latitude;
+    final longitude = _displayLongitude ?? widget.longitude;
+    final heading = _displayHeading ?? widget.heading;
 
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: onTap,
+        onTap: widget.onTap,
         child: ClipRect(
           child: FutureBuilder<_PelotasMapData>(
             future: _pelotasMapDataFuture,
             builder: (context, snapshot) {
               final routeInfo = _CockpitRouteInfo.fromRoute(
-                route: route,
+                route: widget.route,
                 latitude: latitude,
                 longitude: longitude,
                 heading: heading,
                 mapData: snapshot.data,
               );
               final mapData = snapshot.data;
-              final showLocalMap = localMapPreview && mapData != null;
+              final showLocalMap = widget.localMapPreview && mapData != null;
 
               return Stack(
                 children: [
@@ -2858,16 +3166,17 @@ class _PelotasOfflineMapCard extends StatelessWidget {
                               latitude: latitude,
                               longitude: longitude,
                               heading: heading,
-                              active: active,
-                              vehicleIcon: vehicleIcon,
-                              route: route,
+                              active: widget.active,
+                              vehicleIcon: widget.vehicleIcon,
+                              route: widget.route,
                               darkMode: Theme.of(context).brightness ==
                                   Brightness.dark,
-                              gpsLatitudeSpan: 0.00013,
+                              gpsLatitudeSpan: 0.00135,
+                              showVehicle: false,
                             )
                           : _CockpitDrivePainter(
                               routeInfo: routeInfo,
-                              active: active,
+                              active: widget.active,
                               darkMode: Theme.of(context).brightness ==
                                   Brightness.dark,
                             ),
@@ -2904,13 +3213,13 @@ class _PelotasOfflineMapCard extends StatelessWidget {
                             vertical: 3,
                           ),
                           decoration: BoxDecoration(
-                            color: (active
+                            color: (widget.active
                                     ? _HomeScreenState._green
                                     : _HomeScreenState._blue)
                                 .withValues(alpha: 0.18),
                             borderRadius: BorderRadius.circular(8),
                             border: Border.all(
-                              color: active
+                              color: widget.active
                                   ? _HomeScreenState._green
                                   : _HomeScreenState._blue,
                               width: 0.8,
@@ -2921,11 +3230,11 @@ class _PelotasOfflineMapCard extends StatelessWidget {
                                 ? 'LOCAL'
                                 : routeInfo.hasRoute
                                     ? routeInfo.distanceLabel
-                                    : active
+                                    : widget.active
                                         ? routeInfo.distanceLabel
                                         : 'GPS',
                             style: TextStyle(
-                              color: active
+                              color: widget.active
                                   ? _HomeScreenState._green
                                   : _HomeScreenState._blue,
                               fontSize: 9,
@@ -2944,6 +3253,18 @@ class _PelotasOfflineMapCard extends StatelessWidget {
                         heightFactor: 0.84,
                         child: Image.asset(
                           'assets/images/car_top.png',
+                          fit: BoxFit.contain,
+                          filterQuality: FilterQuality.high,
+                        ),
+                      ),
+                    ),
+                  if (showLocalMap)
+                    Center(
+                      child: FractionallySizedBox(
+                        widthFactor: 0.36,
+                        heightFactor: 0.32,
+                        child: Image.asset(
+                          'assets/images/aereo_onix.png',
                           fit: BoxFit.contain,
                           filterQuality: FilterQuality.high,
                         ),
@@ -3068,6 +3389,7 @@ class _PelotasMapPainter extends CustomPainter {
     required this.route,
     required this.darkMode,
     this.gpsLatitudeSpan = 0.00028,
+    this.showVehicle = true,
   });
 
   final _PelotasMapData data;
@@ -3079,6 +3401,7 @@ class _PelotasMapPainter extends CustomPainter {
   final OfflineRoute? route;
   final bool darkMode;
   final double gpsLatitudeSpan;
+  final bool showVehicle;
 
   bool get _hasGps => latitude != null && longitude != null;
 
@@ -3098,7 +3421,7 @@ class _PelotasMapPainter extends CustomPainter {
     _drawRoads(canvas, size);
     _drawFuelStations(canvas, size);
     _drawRoute(canvas, size);
-    _drawVehicle(canvas, size);
+    if (showVehicle) _drawVehicle(canvas, size);
   }
 
   void _drawGrid(Canvas canvas, Size size) {
@@ -3126,31 +3449,31 @@ class _PelotasMapPainter extends CustomPainter {
         darkMode ? const Color(0xFF39D8B6) : const Color(0xFF168C78);
     final glowRoad =
         darkMode ? const Color(0xFF39D8B6) : const Color(0xFF168C78);
-    final gpsScale = _hasGps ? 4.2 : 1.0;
+    final gpsScale = _hasGps ? 5.8 : 1.0;
     final paints = <int, Paint>{
       0: Paint()
         ..color = minorRoad.withValues(alpha: darkMode ? 0.55 : 0.65)
-        ..strokeWidth = 0.45 * gpsScale
+        ..strokeWidth = 0.62 * gpsScale
         ..style = PaintingStyle.stroke,
       1: Paint()
         ..color = localRoad.withValues(alpha: darkMode ? 0.7 : 0.75)
-        ..strokeWidth = 0.65 * gpsScale
+        ..strokeWidth = 0.82 * gpsScale
         ..style = PaintingStyle.stroke,
       2: Paint()
         ..color = collectorRoad.withValues(alpha: 0.82)
-        ..strokeWidth = 0.85 * gpsScale
+        ..strokeWidth = 1.04 * gpsScale
         ..style = PaintingStyle.stroke,
       3: Paint()
         ..color = mainRoad.withValues(alpha: 0.85)
-        ..strokeWidth = 1.05 * gpsScale
+        ..strokeWidth = 1.28 * gpsScale
         ..style = PaintingStyle.stroke,
       4: Paint()
         ..color = glowRoad.withValues(alpha: 0.9)
-        ..strokeWidth = 1.35 * gpsScale
+        ..strokeWidth = 1.62 * gpsScale
         ..style = PaintingStyle.stroke,
       5: Paint()
         ..color = _HomeScreenState._green.withValues(alpha: 0.9)
-        ..strokeWidth = 1.55 * gpsScale
+        ..strokeWidth = 1.84 * gpsScale
         ..style = PaintingStyle.stroke,
     };
 
@@ -3247,7 +3570,7 @@ class _PelotasMapPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeCap = StrokeCap.round
         ..strokeJoin = StrokeJoin.round
-        ..strokeWidth = 9,
+        ..strokeWidth = 12,
     );
     canvas.drawPath(
       path,
@@ -3256,7 +3579,7 @@ class _PelotasMapPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeCap = StrokeCap.round
         ..strokeJoin = StrokeJoin.round
-        ..strokeWidth = 4.5,
+        ..strokeWidth = 6.2,
     );
   }
 
@@ -3444,7 +3767,8 @@ class _PelotasMapPainter extends CustomPainter {
         oldDelegate.vehicleIcon != vehicleIcon ||
         oldDelegate.route != route ||
         oldDelegate.darkMode != darkMode ||
-        oldDelegate.gpsLatitudeSpan != gpsLatitudeSpan;
+        oldDelegate.gpsLatitudeSpan != gpsLatitudeSpan ||
+        oldDelegate.showVehicle != showVehicle;
   }
 }
 
@@ -3499,7 +3823,7 @@ class _TripPanel extends StatelessWidget {
                   children: [
                     _TripLine(
                       Icons.route,
-                      'Distancia',
+                      'DistÃ¢ncia',
                       distance,
                       'km',
                       dense: dense,
@@ -3856,7 +4180,7 @@ class _NavigationRouteCard extends StatelessWidget {
         final dense = constraints.maxHeight < 95 || constraints.maxWidth < 190;
         final title = instruction?.title ?? (hasRoute ? 'ROTA ATIVA' : 'ROTAS');
         final detail =
-            instruction?.detail ?? destination ?? 'Favoritos e navegacao';
+            instruction?.detail ?? destination ?? 'Favoritos e navegaÃ§Ã£o';
 
         return Material(
           color: Colors.transparent,

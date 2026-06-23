@@ -149,7 +149,7 @@ class OfflineMapService {
       return;
     }
     if (!await File(path).exists()) {
-      throw const FileSystemException('Mapa offline nao encontrado');
+      throw const FileSystemException('Mapa offline não encontrado');
     }
     await prefs.setString(_currentMapKey, path);
   }
@@ -294,7 +294,7 @@ class OfflineMapService {
     final results = response as List;
 
     if (results.isEmpty) {
-      throw const FormatException('Cidade nao encontrada');
+      throw const FormatException('Cidade não encontrada');
     }
 
     return _SearchPlace.fromJson(results.first as Map<String, dynamic>);
@@ -575,23 +575,23 @@ out skel qt;
 
   String _normalize(String value) {
     const accents = {
-      'á': 'a',
-      'à': 'a',
-      'ã': 'a',
-      'â': 'a',
-      'ä': 'a',
-      'é': 'e',
-      'ê': 'e',
-      'ë': 'e',
-      'í': 'i',
-      'ï': 'i',
-      'ó': 'o',
-      'õ': 'o',
-      'ô': 'o',
-      'ö': 'o',
-      'ú': 'u',
-      'ü': 'u',
-      'ç': 'c',
+      'Ã¡': 'a',
+      'Ã ': 'a',
+      'Ã£': 'a',
+      'Ã¢': 'a',
+      'Ã¤': 'a',
+      'Ã©': 'e',
+      'Ãª': 'e',
+      'Ã«': 'e',
+      'Ã­': 'i',
+      'Ã¯': 'i',
+      'Ã³': 'o',
+      'Ãµ': 'o',
+      'Ã´': 'o',
+      'Ã¶': 'o',
+      'Ãº': 'u',
+      'Ã¼': 'u',
+      'Ã§': 'c',
     };
     var result = value.toLowerCase();
     accents.forEach((from, to) {

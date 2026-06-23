@@ -7,7 +7,6 @@ import 'package:provider/provider.dart';
 import '../models/offline_map.dart';
 import '../providers/app_provider.dart';
 import '../services/offline_map_service.dart';
-import '../widgets/maplibre_navigation_map.dart';
 
 class OfflineMapScreen extends StatefulWidget {
   const OfflineMapScreen({super.key});
@@ -29,7 +28,6 @@ class _OfflineMapScreenState extends State<OfflineMapScreen> {
   double _gestureStartLatSpan = 0.025;
   bool _followCar = true;
   bool _routePanelCollapsed = false;
-  bool _useVectorMap = true;
   bool _showFuelPois = true;
   bool _showPharmacyPois = true;
   bool _showSupermarketPois = true;
@@ -70,7 +68,7 @@ class _OfflineMapScreenState extends State<OfflineMapScreen> {
     } catch (error) {
       if (!mounted) return;
       setState(() {
-        _message = 'Nao foi possivel carregar o mapa offline';
+        _message = 'Não foi possível carregar o mapa offline';
         _loading = false;
       });
     }
@@ -115,7 +113,7 @@ class _OfflineMapScreenState extends State<OfflineMapScreen> {
     setState(() {
       _route = route;
       _routing = false;
-      _message = route == null ? 'Rota indisponivel neste mapa offline' : null;
+      _message = route == null ? 'Rota indisponível neste mapa offline' : null;
     });
     if (route != null) {
       provider.setActiveNavigationRoute(
@@ -166,7 +164,7 @@ class _OfflineMapScreenState extends State<OfflineMapScreen> {
         _route = route;
         _message = 'Rota recalculada';
       } else {
-        _message = 'Nao consegui recalcular neste mapa offline';
+        _message = 'Não consegui recalcular neste mapa offline';
       }
     });
 
@@ -308,7 +306,7 @@ class _OfflineMapScreenState extends State<OfflineMapScreen> {
     final origin = _origin(provider);
     if (origin == null) {
       setState(() {
-        _message = 'GPS ainda nao informou a posicao atual';
+        _message = 'GPS ainda não informou a posição atual';
       });
       return;
     }
@@ -868,28 +866,6 @@ class _OfflineMapScreenState extends State<OfflineMapScreen> {
                   child: LayoutBuilder(
                     builder: (context, constraints) {
                       final size = constraints.biggest;
-                      if (_useVectorMap) {
-                        return MapLibreNavigationMap(
-                          map: map,
-                          pointsOfInterest: visiblePois,
-                          origin: origin,
-                          viewCenter: _viewCenter,
-                          viewLatSpan: _viewLatSpan,
-                          heading: provider.lastGpsHeading,
-                          route: _route,
-                          destination: _destination?.position,
-                          darkMode:
-                              Theme.of(context).brightness == Brightness.dark,
-                          followCar: _followCar,
-                          onUserGesture: () {
-                            setState(() {
-                              _followCar = false;
-                              _viewCenter = null;
-                            });
-                          },
-                          onPoiTap: (poi) => _showPoiSheet(provider, poi),
-                        );
-                      }
                       return GestureDetector(
                         behavior: HitTestBehavior.opaque,
                         onScaleStart: (details) =>
@@ -898,21 +874,37 @@ class _OfflineMapScreenState extends State<OfflineMapScreen> {
                             _handleScaleUpdate(details, size, origin),
                         onTapUp: (details) =>
                             _handleMapTap(details, size, provider, map, origin),
-                        child: CustomPaint(
-                          painter: _FullscreenMapPainter(
-                            map: map,
-                            pointsOfInterest: visiblePois,
-                            origin: origin,
-                            viewCenter: _effectiveCenter(origin),
-                            viewLatSpan: _viewLatSpan,
-                            followCar: _followCar,
-                            heading: provider.lastGpsHeading,
-                            vehicleIcon: provider.mapVehicleIcon,
-                            destination: _destination?.position,
-                            route: _route,
-                            darkMode:
-                                Theme.of(context).brightness == Brightness.dark,
-                          ),
+                        child: Stack(
+                          children: [
+                            Positioned.fill(
+                              child: CustomPaint(
+                                painter: _FullscreenMapPainter(
+                                  map: map,
+                                  pointsOfInterest: visiblePois,
+                                  origin: origin,
+                                  viewCenter: _effectiveCenter(origin),
+                                  viewLatSpan: _viewLatSpan,
+                                  followCar: _followCar,
+                                  heading: provider.lastGpsHeading,
+                                  vehicleIcon: provider.mapVehicleIcon,
+                                  destination: _destination?.position,
+                                  route: _route,
+                                  darkMode: Theme.of(context).brightness ==
+                                      Brightness.dark,
+                                  showVehicle: false,
+                                ),
+                              ),
+                            ),
+                            if (origin != null)
+                              _OfflineVehicleMarkerOverlay(
+                                size: size,
+                                origin: origin,
+                                viewCenter: _effectiveCenter(origin),
+                                viewLatSpan: _viewLatSpan,
+                                followCar: _followCar,
+                                heading: provider.lastGpsHeading,
+                              ),
+                          ],
                         ),
                       );
                     },
@@ -950,16 +942,6 @@ class _OfflineMapScreenState extends State<OfflineMapScreen> {
                         icon: Icons.map,
                         tooltip: 'Mapas baixados',
                         onTap: _showMapManager,
-                      ),
-                      const SizedBox(height: 8),
-                      _MapFab(
-                        icon: _useVectorMap ? Icons.layers : Icons.public,
-                        tooltip: _useVectorMap
-                            ? 'Usar mapa offline simples'
-                            : 'Usar mapa vetorial',
-                        onTap: () {
-                          setState(() => _useVectorMap = !_useVectorMap);
-                        },
                       ),
                     ],
                   ),
@@ -1726,6 +1708,84 @@ class _RouteInstruction {
   final IconData icon;
 }
 
+class _OfflineVehicleMarkerOverlay extends StatelessWidget {
+  const _OfflineVehicleMarkerOverlay({
+    required this.size,
+    required this.origin,
+    required this.viewCenter,
+    required this.viewLatSpan,
+    required this.followCar,
+    required this.heading,
+  });
+
+  final Size size;
+  final Offset origin;
+  final Offset viewCenter;
+  final double viewLatSpan;
+  final bool followCar;
+  final double? heading;
+
+  @override
+  Widget build(BuildContext context) {
+    final point = _project(origin);
+    final markerSize = _markerSize;
+    final visibleRect = (Offset.zero & size).inflate(markerSize);
+    if (!visibleRect.contains(point)) return const SizedBox.shrink();
+
+    return Positioned(
+      left: point.dx - markerSize / 2,
+      top: point.dy - markerSize / 2,
+      width: markerSize,
+      height: markerSize,
+      child: IgnorePointer(
+        child: Transform.rotate(
+          angle: followCar ? 0 : (heading ?? 0) * math.pi / 180,
+          child: Image.asset(
+            'assets/images/aereo_onix.png',
+            fit: BoxFit.contain,
+            filterQuality: FilterQuality.high,
+          ),
+        ),
+      ),
+    );
+  }
+
+  double get _markerSize {
+    if (viewLatSpan <= 0.004) return 84;
+    if (viewLatSpan <= 0.012) return 72;
+    if (viewLatSpan <= 0.03) return 60;
+    return 50;
+  }
+
+  Offset _project(Offset lonLat) {
+    final centerLat = viewCenter.dy * math.pi / 180;
+    final cosLat = math.cos(centerLat).abs().clamp(0.25, 1.0);
+    final lonSpan = viewLatSpan * (size.width / size.height) / cosLat;
+    final minLat = viewCenter.dy - viewLatSpan / 2;
+    final minLon = viewCenter.dx - lonSpan / 2;
+    final normalizedX = (lonLat.dx - minLon) / lonSpan;
+    final normalizedY = 1 - ((lonLat.dy - minLat) / viewLatSpan);
+    return _rotateForCompass(
+      Offset(normalizedX * size.width, normalizedY * size.height),
+    );
+  }
+
+  Offset _rotateForCompass(Offset point) {
+    if (!followCar || heading == null) return point;
+
+    final angle = -(heading! * math.pi / 180);
+    final center = Offset(size.width / 2, size.height / 2);
+    final translated = point - center;
+    final cosA = math.cos(angle);
+    final sinA = math.sin(angle);
+    return Offset(
+          translated.dx * cosA - translated.dy * sinA,
+          translated.dx * sinA + translated.dy * cosA,
+        ) +
+        center;
+  }
+}
+
 class _FullscreenMapPainter extends CustomPainter {
   const _FullscreenMapPainter({
     required this.map,
@@ -1739,6 +1799,7 @@ class _FullscreenMapPainter extends CustomPainter {
     required this.destination,
     required this.route,
     required this.darkMode,
+    required this.showVehicle,
   });
 
   final OfflineMapData map;
@@ -1752,6 +1813,7 @@ class _FullscreenMapPainter extends CustomPainter {
   final Offset? destination;
   final OfflineRoute? route;
   final bool darkMode;
+  final bool showVehicle;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1765,13 +1827,15 @@ class _FullscreenMapPainter extends CustomPainter {
     _drawPois(canvas, size);
     _drawRoute(canvas, size);
     _drawMarker(canvas, size, destination, const Color(0xFF39D8B6), 9);
-    _drawVehicle(
-      canvas,
-      size,
-      origin ?? map.center,
-      const Color(0xFF31E981),
-      13,
-    );
+    if (showVehicle) {
+      _drawVehicle(
+        canvas,
+        size,
+        origin ?? map.center,
+        const Color(0xFF31E981),
+        13,
+      );
+    }
   }
 
   void _drawRoads(Canvas canvas, Size size) {
@@ -2115,7 +2179,8 @@ class _FullscreenMapPainter extends CustomPainter {
         oldDelegate.vehicleIcon != vehicleIcon ||
         oldDelegate.destination != destination ||
         oldDelegate.route != route ||
-        oldDelegate.darkMode != darkMode;
+        oldDelegate.darkMode != darkMode ||
+        oldDelegate.showVehicle != showVehicle;
   }
 }
 
@@ -2228,40 +2293,40 @@ const _regionalCities = <_RegionalCity>[
 
 String _normalizeSearch(String value) {
   const replacements = {
-    'á': 'a',
-    'à': 'a',
-    'ã': 'a',
-    'â': 'a',
-    'ä': 'a',
-    'é': 'e',
-    'ê': 'e',
-    'ë': 'e',
-    'í': 'i',
-    'ï': 'i',
-    'ó': 'o',
-    'õ': 'o',
-    'ô': 'o',
-    'ö': 'o',
-    'ú': 'u',
-    'ü': 'u',
-    'ç': 'c',
-    'Á': 'a',
-    'À': 'a',
-    'Ã': 'a',
-    'Â': 'a',
-    'Ä': 'a',
-    'É': 'e',
-    'Ê': 'e',
-    'Ë': 'e',
-    'Í': 'i',
-    'Ï': 'i',
-    'Ó': 'o',
-    'Õ': 'o',
-    'Ô': 'o',
-    'Ö': 'o',
-    'Ú': 'u',
-    'Ü': 'u',
-    'Ç': 'c',
+    'Ã¡': 'a',
+    'Ã ': 'a',
+    'Ã£': 'a',
+    'Ã¢': 'a',
+    'Ã¤': 'a',
+    'Ã©': 'e',
+    'Ãª': 'e',
+    'Ã«': 'e',
+    'Ã­': 'i',
+    'Ã¯': 'i',
+    'Ã³': 'o',
+    'Ãµ': 'o',
+    'Ã´': 'o',
+    'Ã¶': 'o',
+    'Ãº': 'u',
+    'Ã¼': 'u',
+    'Ã§': 'c',
+    'Ã': 'a',
+    'Ã€': 'a',
+    'Ãƒ': 'a',
+    'Ã‚': 'a',
+    'Ã„': 'a',
+    'Ã‰': 'e',
+    'ÃŠ': 'e',
+    'Ã‹': 'e',
+    'Ã': 'i',
+    'Ã': 'i',
+    'Ã“': 'o',
+    'Ã•': 'o',
+    'Ã”': 'o',
+    'Ã–': 'o',
+    'Ãš': 'u',
+    'Ãœ': 'u',
+    'Ã‡': 'c',
   };
   var normalized = value.toLowerCase().trim();
   replacements.forEach((from, to) {

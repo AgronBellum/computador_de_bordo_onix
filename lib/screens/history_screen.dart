@@ -27,7 +27,7 @@ class HistoryScreen extends StatelessWidget {
           ),
           onPressed: () => _goHome(context),
         ),
-        title: const Text('HISTÓRICO'),
+        title: const Text('HISTORICO'),
         centerTitle: false,
         backgroundColor: Colors.transparent,
         elevation: 0,
