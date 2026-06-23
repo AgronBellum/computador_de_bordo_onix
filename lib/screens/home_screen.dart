@@ -720,9 +720,22 @@ class _HomeScreenState extends State<HomeScreen> {
       }
 
       voiceStatus.value = 'Ativando reconhecimento...';
+      var speechTimedOut = false;
+      Completer<void>? listenDone;
       final available = await speech.initialize(
         onError: (error) {
-          voiceStatus.value = 'Erro no microfone: ${error.errorMsg}';
+          final message = error.errorMsg;
+          if (message == 'error_speech_timeout' ||
+              message == 'error_no_match') {
+            speechTimedOut = true;
+            voiceStatus.value = 'Não ouvi nenhum comando';
+            final done = listenDone;
+            if (done != null && !done.isCompleted) {
+              done.complete();
+            }
+            return;
+          }
+          voiceStatus.value = 'Erro no microfone: $message';
         },
         onStatus: (status) {
           if (status == 'listening') {
@@ -740,14 +753,18 @@ class _HomeScreenState extends State<HomeScreen> {
         return;
       }
 
-      voiceStatus.value = 'Ouvindo...';
+      voiceStatus.value = 'Fale agora...';
       var recognized = '';
       final done = Completer<void>();
+      listenDone = done;
       try {
         await speech.listen(
           localeId: 'pt_BR',
-          listenFor: const Duration(seconds: 6),
-          pauseFor: const Duration(milliseconds: 900),
+          listenFor: const Duration(seconds: 12),
+          pauseFor: const Duration(seconds: 2),
+          partialResults: true,
+          cancelOnError: false,
+          listenMode: stt.ListenMode.dictation,
           onResult: (result) {
             recognized = result.recognizedWords;
             recognizedPreview.value =
@@ -763,11 +780,13 @@ class _HomeScreenState extends State<HomeScreen> {
         );
 
         await done.future.timeout(
-          const Duration(seconds: 7),
+          const Duration(seconds: 13),
           onTimeout: () {},
         );
       } catch (_) {
-        voiceStatus.value = 'Falha ao ouvir comando';
+        if (!speechTimedOut) {
+          voiceStatus.value = 'Falha ao ouvir comando';
+        }
         recognized = '';
       } finally {
         await speech.stop();
