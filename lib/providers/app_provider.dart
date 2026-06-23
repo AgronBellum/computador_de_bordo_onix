@@ -230,14 +230,7 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> answerVoiceAssistantCommand(String command) async {
-    final normalized = command
-        .toLowerCase()
-        .replaceAll(RegExp(r'[áàâã]'), 'a')
-        .replaceAll(RegExp(r'[éê]'), 'e')
-        .replaceAll(RegExp(r'[í]'), 'i')
-        .replaceAll(RegExp(r'[óôõ]'), 'o')
-        .replaceAll(RegExp(r'[ú]'), 'u')
-        .replaceAll('ç', 'c');
+    final normalized = _normalizeVoiceCommand(command);
 
     final trip = _activeTrip;
     if (trip == null) {
@@ -247,35 +240,201 @@ class AppProvider extends ChangeNotifier {
 
     final fuelPercent = (fuelPercentage * 100).round().clamp(0, 100);
     final autonomyKm = trip.estimatedRange.round().clamp(0, 999999);
+    final intent = _detectVoiceIntent(normalized);
 
-    if (normalized.contains('combust') ||
-        normalized.contains('gasolina') ||
-        normalized.contains('tanque')) {
-      await _audio.playAssistantFuelOnly(fuelPercent);
-      return;
+    switch (intent) {
+      case 'fuel':
+        await _audio.playAssistantFuelOnly(fuelPercent);
+        return;
+      case 'autonomy':
+        await _audio.playAssistantAutonomy(autonomyKm);
+        return;
+      case 'oil':
+        await _audio.playAssistantOilStatus(
+          remainingKm: oilKmRemaining?.round(),
+          due: isOilChangeDue,
+        );
+        return;
+      case 'summary':
+      default:
+        await _audio.playAssistantFuelSummary(
+          fuelPercent: fuelPercent,
+          autonomyKm: autonomyKm,
+        );
+        return;
+    }
+  }
+
+  String _normalizeVoiceCommand(String command) {
+    final normalized = command
+        .toLowerCase()
+        .replaceAll(RegExp(r'[áàâãä]'), 'a')
+        .replaceAll(RegExp(r'[éèêë]'), 'e')
+        .replaceAll(RegExp(r'[íìîï]'), 'i')
+        .replaceAll(RegExp(r'[óòôõö]'), 'o')
+        .replaceAll(RegExp(r'[úùûü]'), 'u')
+        .replaceAll('ç', 'c')
+        .replaceAll(RegExp(r'[^a-z0-9 ]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+
+    return normalized
+        .replaceAll('combustivel', 'combustivel')
+        .replaceAll('conbustivel', 'combustivel')
+        .replaceAll('com bustivel', 'combustivel')
+        .replaceAll('gazo lina', 'gasolina')
+        .replaceAll('autonomia', 'autonomia')
+        .replaceAll('auto nomia', 'autonomia')
+        .replaceAll('quilometros', 'quilometros')
+        .replaceAll('quilometro', 'quilometro')
+        .replaceAll('oleo', 'oleo')
+        .replaceAll('olio', 'oleo');
+  }
+
+  String _detectVoiceIntent(String normalized) {
+    if (normalized.isEmpty) return 'summary';
+
+    final scores = <String, int>{
+      'summary': _voiceIntentScore(
+        normalized,
+        phrases: const [
+          'como estamos',
+          'como esta',
+          'status',
+          'resumo',
+          'situacao',
+          'informacoes',
+          'painel',
+          'me fala',
+        ],
+        words: const ['status', 'resumo', 'situacao', 'painel'],
+      ),
+      'fuel': _voiceIntentScore(
+        normalized,
+        phrases: const [
+          'como estamos de combustivel',
+          'nivel de combustivel',
+          'quanto combustivel',
+          'quanto tem no tanque',
+          'como esta o tanque',
+          'estou com quanto',
+          'tem gasolina',
+        ],
+        words: const [
+          'combustivel',
+          'gasolina',
+          'tanque',
+          'litros',
+          'reserva',
+          'abastecimento',
+          'abastecer',
+        ],
+      ),
+      'autonomy': _voiceIntentScore(
+        normalized,
+        phrases: const [
+          'qual autonomia',
+          'quanto posso rodar',
+          'quantos quilometros',
+          'quanto falta de autonomia',
+          'qual alcance',
+          'ate onde da para ir',
+        ],
+        words: const [
+          'autonomia',
+          'alcance',
+          'rodar',
+          'andar',
+          'quilometro',
+          'quilometros',
+          'km',
+          'distancia',
+        ],
+      ),
+      'oil': _voiceIntentScore(
+        normalized,
+        phrases: const [
+          'troca de oleo',
+          'quando trocar oleo',
+          'como esta o oleo',
+          'falta quanto para troca',
+          'proxima troca',
+          'filtro de oleo',
+        ],
+        words: const ['oleo', 'troca', 'filtro', 'lubrificante'],
+      ),
+    };
+
+    var bestIntent = 'summary';
+    var bestScore = scores[bestIntent] ?? 0;
+    for (final entry in scores.entries) {
+      if (entry.value > bestScore) {
+        bestIntent = entry.key;
+        bestScore = entry.value;
+      }
     }
 
-    if (normalized.contains('autonomia') ||
-        normalized.contains('quilometro') ||
-        normalized.contains('alcance')) {
-      await _audio.playAssistantAutonomy(autonomyKm);
-      return;
+    return bestScore <= 0 ? 'summary' : bestIntent;
+  }
+
+  int _voiceIntentScore(
+    String normalized, {
+    required List<String> phrases,
+    required List<String> words,
+  }) {
+    var score = 0;
+    final tokens = normalized.split(' ');
+
+    for (final phrase in phrases) {
+      if (normalized.contains(phrase)) score += 8;
     }
 
-    if (normalized.contains('como estamos') ||
-        normalized.contains('resumo') ||
-        normalized.contains('status')) {
-      await _audio.playAssistantFuelSummary(
-        fuelPercent: fuelPercent,
-        autonomyKm: autonomyKm,
-      );
-      return;
+    for (final word in words) {
+      if (normalized.contains(word)) score += 4;
+      for (final token in tokens) {
+        if (_voiceTokenLooksLike(token, word)) score += 2;
+      }
     }
 
-    await _audio.playAssistantFuelSummary(
-      fuelPercent: fuelPercent,
-      autonomyKm: autonomyKm,
-    );
+    return score;
+  }
+
+  bool _voiceTokenLooksLike(String token, String target) {
+    if (token.length < 3 || target.length < 3) return false;
+    if (token == target) return true;
+    if (target.length >= 5 &&
+        (token.startsWith(target.substring(0, 4)) ||
+            target.startsWith(token))) {
+      return true;
+    }
+    final limit = target.length >= 7 ? 2 : 1;
+    return _levenshteinDistance(token, target, limit) <= limit;
+  }
+
+  int _levenshteinDistance(String a, String b, int maxDistance) {
+    if ((a.length - b.length).abs() > maxDistance) return maxDistance + 1;
+    var previous = List<int>.generate(b.length + 1, (index) => index);
+
+    for (var i = 0; i < a.length; i++) {
+      final current = List<int>.filled(b.length + 1, 0);
+      current[0] = i + 1;
+      var rowMin = current[0];
+
+      for (var j = 0; j < b.length; j++) {
+        final cost = a.codeUnitAt(i) == b.codeUnitAt(j) ? 0 : 1;
+        current[j + 1] = [
+          current[j] + 1,
+          previous[j + 1] + 1,
+          previous[j] + cost,
+        ].reduce((value, element) => value < element ? value : element);
+        if (current[j + 1] < rowMin) rowMin = current[j + 1];
+      }
+
+      if (rowMin > maxDistance) return maxDistance + 1;
+      previous = current;
+    }
+
+    return previous[b.length];
   }
 
   Future<void> setDrivingMode(String mode) async {

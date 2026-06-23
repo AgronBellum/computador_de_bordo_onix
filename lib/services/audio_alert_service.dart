@@ -69,6 +69,33 @@ class AudioAlertService {
     ], force: true);
   }
 
+  Future<void> playAssistantOilStatus({
+    required int? remainingKm,
+    required bool due,
+  }) {
+    if (remainingKm == null) {
+      return _playSequence([
+        'assistente/oleo.mp3',
+        'assistente/proxima_troca.mp3',
+      ], force: true);
+    }
+
+    if (due || remainingKm <= 0) {
+      return _playSequence([
+        'assistente/atencao.mp3',
+        'assistente/troca_de_oleo.mp3',
+      ], force: true);
+    }
+
+    return _playSequence([
+      'assistente/faltam.mp3',
+      ..._numberFiles(remainingKm),
+      'assistente/quilometros.mp3',
+      'assistente/proxima_troca.mp3',
+      'assistente/oleo.mp3',
+    ], force: true);
+  }
+
   Future<void> playStartupGreeting() {
     final hour = DateTime.now().hour;
 

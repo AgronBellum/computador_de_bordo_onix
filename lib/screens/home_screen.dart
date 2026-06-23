@@ -766,9 +766,12 @@ class _HomeScreenState extends State<HomeScreen> {
           cancelOnError: false,
           listenMode: stt.ListenMode.dictation,
           onResult: (result) {
-            recognized = result.recognizedWords;
+            recognized = _bestVoiceTranscript(result, recognized);
+            final confidence = result.confidence;
+            final confidenceText =
+                confidence > 0 ? ' (${(confidence * 100).round()}%)' : '';
             recognizedPreview.value =
-                recognized.isEmpty ? '' : 'Entendi: $recognized';
+                recognized.isEmpty ? '' : 'Entendi$confidenceText: $recognized';
             if (recognized.isNotEmpty) {
               voiceStatus.value =
                   result.finalResult ? 'Comando entendido' : 'Ouvindo...';
@@ -805,6 +808,25 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() => _voiceAssistantBusy = false);
       }
     }
+  }
+
+  String _bestVoiceTranscript(dynamic result, String previous) {
+    final candidates = <String>[];
+    for (final alternate in result.alternates) {
+      final words = alternate.recognizedWords.toString().trim();
+      if (words.isNotEmpty) candidates.add(words);
+    }
+    final primary = result.recognizedWords.toString().trim();
+    if (primary.isNotEmpty) candidates.add(primary);
+    if (previous.trim().isNotEmpty) candidates.add(previous.trim());
+    if (candidates.isEmpty) return '';
+
+    candidates.sort((a, b) {
+      final wordCompare = b.split(' ').length.compareTo(a.split(' ').length);
+      if (wordCompare != 0) return wordCompare;
+      return b.length.compareTo(a.length);
+    });
+    return candidates.first;
   }
 
   Future<bool> _requestVoicePermission() async {
