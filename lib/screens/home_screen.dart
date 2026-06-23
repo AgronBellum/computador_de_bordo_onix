@@ -713,10 +713,8 @@ class _HomeScreenState extends State<HomeScreen> {
       await Future<void>.delayed(const Duration(milliseconds: 180));
       final voicePermission = await _requestVoicePermission();
       if (!voicePermission) {
-        voiceStatus.value = 'Permissão de microfone negada';
-        await Future<void>.delayed(const Duration(milliseconds: 900));
-        await answer('status');
-        return;
+        voiceStatus.value = 'Permissão não confirmada, tentando ouvir...';
+        await Future<void>.delayed(const Duration(milliseconds: 650));
       }
 
       voiceStatus.value = 'Ativando reconhecimento...';
@@ -747,8 +745,10 @@ class _HomeScreenState extends State<HomeScreen> {
         },
       );
       if (!available) {
-        voiceStatus.value = 'Reconhecimento indisponível';
-        await Future<void>.delayed(const Duration(milliseconds: 900));
+        voiceStatus.value = 'Reconhecimento de voz indisponível';
+        recognizedPreview.value =
+            'O Android da multimídia não abriu o serviço de fala.';
+        await Future<void>.delayed(const Duration(milliseconds: 3500));
         await answer('status');
         return;
       }
