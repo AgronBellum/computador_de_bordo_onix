@@ -37,6 +37,38 @@ class AudioAlertService {
   Future<void> playCityMode() => _play('cidade.mp3');
   Future<void> playTripMode() => _play('viagem.mp3');
 
+  Future<void> playAssistantFuelSummary({
+    required int fuelPercent,
+    required int autonomyKm,
+  }) {
+    return _playSequence([
+      'assistente/estou_com.mp3',
+      ..._numberFiles(fuelPercent),
+      'assistente/porcento_de.mp3',
+      'assistente/combustivel.mp3',
+      'assistente/autonomia.mp3',
+      ..._numberFiles(autonomyKm),
+      'assistente/quilometros.mp3',
+    ], force: true);
+  }
+
+  Future<void> playAssistantAutonomy(int autonomyKm) {
+    return _playSequence([
+      'assistente/autonomia.mp3',
+      ..._numberFiles(autonomyKm),
+      'assistente/quilometros.mp3',
+    ], force: true);
+  }
+
+  Future<void> playAssistantFuelOnly(int fuelPercent) {
+    return _playSequence([
+      'assistente/estou_com.mp3',
+      ..._numberFiles(fuelPercent),
+      'assistente/porcento_de.mp3',
+      'assistente/combustivel.mp3',
+    ], force: true);
+  }
+
   Future<void> playStartupGreeting() {
     final hour = DateTime.now().hour;
 
@@ -56,6 +88,43 @@ class AudioAlertService {
     return _play(fileNames[index]);
   }
 
+  Future<void> _playSequence(List<String> fileNames, {bool force = false}) {
+    if (!_enabled && !force) return Future.value();
+
+    for (final fileName in fileNames) {
+      _pending.add(fileName);
+    }
+    unawaited(_drainQueue());
+    return Future.value();
+  }
+
+  List<String> _numberFiles(int value) {
+    final safe = value.clamp(0, 999999);
+    if (safe <= 99) return ['separados/$safe.mp3'];
+    if (safe == 100) return const ['separados/100.mp3'];
+    if (safe < 200) {
+      return ['separados/cento_e.mp3', ..._numberFiles(safe - 100)];
+    }
+    if (safe < 1000) {
+      final hundred = (safe ~/ 100) * 100;
+      final rest = safe % 100;
+      if (rest == 0) return ['separados/$hundred.mp3'];
+      return [
+        'separados/$hundred.mp3',
+        'assistente/e.mp3',
+        ..._numberFiles(rest),
+      ];
+    }
+
+    final thousands = safe ~/ 1000;
+    final rest = safe % 1000;
+    return [
+      if (thousands > 1) ..._numberFiles(thousands),
+      'separados/1000.mp3',
+      if (rest > 0) ...['assistente/e.mp3', ..._numberFiles(rest)],
+    ];
+  }
+
   Future<void> _play(String fileName) {
     if (!_enabled) return Future.value();
 
@@ -70,7 +139,7 @@ class AudioAlertService {
     _isDraining = true;
 
     try {
-      while (_enabled && _pending.isNotEmpty) {
+      while (_pending.isNotEmpty) {
         final fileName = _pending.removeFirst();
         await _playNow(fileName);
       }
@@ -91,6 +160,8 @@ class AudioAlertService {
     try {
       await _player.stop();
       await _player.setReleaseMode(ReleaseMode.stop);
+      await _player.setPlayerMode(PlayerMode.mediaPlayer);
+      await _player.setVolume(1);
       await _player.play(AssetSource('audio/$fileName'));
 
       await done.future.timeout(

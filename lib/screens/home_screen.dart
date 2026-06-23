@@ -5,6 +5,8 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:video_player/video_player.dart';
 
 import '../models/offline_map.dart';
 import '../models/trip_model.dart';
@@ -28,6 +30,8 @@ class _HomeScreenState extends State<HomeScreen> {
   OfflineRouteCalculator? _cachedRouteCalculator;
   List<SavedMapPlace> _cachedPlaces = const [];
   bool _showLocalMapPreview = false;
+  bool _voiceAssistantBusy = false;
+  VideoPlayerController? _voiceVideoController;
 
   static const Color _bg = Color(0xFF020914);
   static const Color _bar = Color(0xFF050D19);
@@ -249,12 +253,12 @@ class _HomeScreenState extends State<HomeScreen> {
                         Expanded(
                           child: _MetricCard(
                             icon: Icons.bar_chart,
-                            title: 'CONSUMO MEDIO GERAL',
+                            title: 'CONSUMO MÃƒâ€°DIO GERAL',
                             value: _decimal(trip.consumptionPerKm, 1),
                             unit: 'km/L',
                             onTap: () => _showNumberEditDialog(
                               context: context,
-                              title: 'Alterar consumo medio',
+                              title: 'Alterar consumo mÃƒÂ©dio',
                               currentValue: trip.consumptionPerKm,
                               suffix: 'km/L',
                               onSave: provider.setConsumption,
@@ -411,6 +415,17 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const Spacer(),
             IconButton(
+              tooltip: 'Assistente de voz',
+              onPressed: _voiceAssistantBusy
+                  ? null
+                  : () => _startVoiceAssistant(provider),
+              icon: Icon(
+                _voiceAssistantBusy ? Icons.mic : Icons.mic_none,
+                color: _voiceAssistantBusy ? _green : colors.secondaryIcon,
+                size: compactHeader ? 23 : 25,
+              ),
+            ),
+            IconButton(
               tooltip: provider.isDarkMode ? 'Modo claro' : 'Modo escuro',
               onPressed: provider.toggleThemeMode,
               icon: Icon(
@@ -420,7 +435,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             IconButton(
-              tooltip: 'ConfiguraÃ§Ãµes',
+              tooltip: 'ConfiguraÃƒÂ§ÃƒÂµes',
               onPressed: () => _showSettingsDialog(context, provider),
               icon: Icon(Icons.settings,
                   color: colors.secondaryIcon, size: compactHeader ? 23 : 25),
@@ -531,7 +546,7 @@ class _HomeScreenState extends State<HomeScreen> {
         Expanded(
           child: _ActionCard(
             icon: Icons.oil_barrel,
-            title: 'Ã“LEO',
+            title: 'Ãƒâ€œLEO',
             subtitle: _oilActionSubtitle(provider),
             color: _oilActionColor(provider),
             onTap: () => _showOilChangeDialog(context, provider),
@@ -556,6 +571,143 @@ class _HomeScreenState extends State<HomeScreen> {
     if (remaining <= 0) return 'Troca vencida';
     if (remaining <= 500) return 'Faltam ${remaining.toStringAsFixed(0)} km';
     return 'Prox. ${provider.oilNextChangeKm!.toStringAsFixed(0)} km';
+  }
+
+  Future<void> _startVoiceAssistant(AppProvider provider) async {
+    if (_voiceAssistantBusy) return;
+
+    setState(() => _voiceAssistantBusy = true);
+    final speech = stt.SpeechToText();
+    VideoPlayerController? controller;
+    var dialogOpen = false;
+
+    Future<void> closeDialog() async {
+      if (dialogOpen && mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        dialogOpen = false;
+      }
+      await controller?.pause();
+      await controller?.dispose();
+      if (_voiceVideoController == controller) {
+        _voiceVideoController = null;
+      }
+    }
+
+    Future<void> answer(String command) async {
+      await closeDialog();
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+      await provider.answerVoiceAssistantCommand(command);
+    }
+
+    try {
+      final available = await speech.initialize(
+        onError: (_) {},
+        onStatus: (_) {},
+      );
+      if (!available) {
+        await answer('status');
+        return;
+      }
+
+      controller = VideoPlayerController.asset('assets/videos/ouvindo.mp4');
+      _voiceVideoController = controller;
+      await controller.initialize();
+      await controller.setVolume(0);
+      await controller.setLooping(true);
+      await controller.play();
+
+      if (!mounted) return;
+      final activeController = controller;
+      dialogOpen = true;
+      unawaited(
+        showGeneralDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          barrierLabel: 'Assistente ouvindo',
+          barrierColor: Colors.black,
+          transitionDuration: Duration.zero,
+          pageBuilder: (_, __, ___) => Material(
+            color: Colors.black,
+            child: SizedBox.expand(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  FittedBox(
+                    fit: BoxFit.cover,
+                    child: SizedBox(
+                      width: activeController.value.size.width,
+                      height: activeController.value.size.height,
+                      child: VideoPlayer(activeController),
+                    ),
+                  ),
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 24,
+                    child: Center(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 10,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.52),
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(
+                            color: _blue.withValues(alpha: 0.7),
+                          ),
+                        ),
+                        child: const Text(
+                          'Ouvindo...',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 18,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+
+      var recognized = '';
+      final done = Completer<void>();
+      try {
+        await speech.listen(
+          localeId: 'pt_BR',
+          listenFor: const Duration(seconds: 6),
+          pauseFor: const Duration(milliseconds: 900),
+          onResult: (result) {
+            recognized = result.recognizedWords;
+            if (result.finalResult && !done.isCompleted) {
+              done.complete();
+            }
+          },
+        );
+
+        await done.future.timeout(
+          const Duration(seconds: 7),
+          onTimeout: () {},
+        );
+      } catch (_) {
+        recognized = '';
+      } finally {
+        await speech.stop();
+      }
+
+      await answer(recognized.trim().isEmpty ? 'status' : recognized);
+    } finally {
+      await closeDialog();
+      if (mounted) {
+        setState(() => _voiceAssistantBusy = false);
+      }
+    }
   }
 
   Widget _buildBottomNav(BuildContext context) {
@@ -677,7 +829,7 @@ class _HomeScreenState extends State<HomeScreen> {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: const Text('Troca de Ã³leo'),
+              title: const Text('Troca de ÃƒÂ³leo'),
               content: SizedBox(
                 width: 420,
                 child: SingleChildScrollView(
@@ -700,7 +852,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         keyboardType: const TextInputType.numberWithOptions(
                             decimal: true),
                         decoration: const InputDecoration(
-                          labelText: 'KM da prÃ³xima troca',
+                          labelText: 'KM da prÃƒÂ³xima troca',
                           prefixIcon: Icon(Icons.flag),
                           suffixText: 'km',
                         ),
@@ -710,7 +862,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         controller: typeController,
                         textCapitalization: TextCapitalization.characters,
                         decoration: const InputDecoration(
-                          labelText: 'Tipo de Ã³leo',
+                          labelText: 'Tipo de ÃƒÂ³leo',
                           hintText: 'Ex: 5W30, 5W40, 10W40',
                           prefixIcon: Icon(Icons.oil_barrel),
                         ),
@@ -718,7 +870,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       const SizedBox(height: 8),
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
-                        title: const Text('Filtro de Ã³leo trocado'),
+                        title: const Text('Filtro de ÃƒÂ³leo trocado'),
                         value: filterChanged,
                         onChanged: (value) =>
                             setDialogState(() => filterChanged = value),
@@ -753,8 +905,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     }
                     if (nextKm < lastKm) {
                       setDialogState(
-                        () =>
-                            error = 'A prÃ³xima troca deve ser maior ou igual',
+                        () => error =
+                            'A prÃƒÂ³xima troca deve ser maior ou igual',
                       );
                       return;
                     }
@@ -894,7 +1046,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
-                      'ConfiguraÃ§Ãµes',
+                      'ConfiguraÃƒÂ§ÃƒÂµes',
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.w700,
@@ -923,7 +1075,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                       Theme.of(context).colorScheme.onSurface,
                                 ),
                                 decoration: const InputDecoration(
-                                  labelText: 'Nome do veículo',
+                                  labelText: 'Nome do veÃƒÂ­culo',
                                   prefixIcon: Icon(Icons.directions_car_filled),
                                 ),
                               ),
@@ -973,7 +1125,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                       Theme.of(context).colorScheme.onSurface,
                                 ),
                                 decoration: const InputDecoration(
-                                  labelText: 'Preco medio gasolina',
+                                  labelText: 'PreÃƒÂ§o mÃƒÂ©dio gasolina',
                                   prefixText: 'R\$ ',
                                   suffixText: '/L',
                                   prefixIcon: Icon(Icons.local_gas_station),
@@ -1234,7 +1386,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               : () async {
                                   setDialogState(() {
                                     busy = true;
-                                    message = 'Buscando paÃ­s...';
+                                    message = 'Buscando paÃƒÂ­s...';
                                   });
                                   try {
                                     final result =
@@ -1251,13 +1403,13 @@ class _HomeScreenState extends State<HomeScreen> {
                                       selectedCity = null;
                                       busy = false;
                                       message = result.isEmpty
-                                          ? 'Nenhum paÃ­s encontrado.'
-                                          : 'Escolha o paÃ­s.';
+                                          ? 'Nenhum paÃƒÂ­s encontrado.'
+                                          : 'Escolha o paÃƒÂ­s.';
                                     });
                                   } catch (_) {
                                     setDialogState(() {
                                       busy = false;
-                                      message = 'Falha ao buscar paÃ­s.';
+                                      message = 'Falha ao buscar paÃƒÂ­s.';
                                     });
                                   }
                                 },
@@ -1454,7 +1606,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             setDialogState(() {
                               busy = false;
                               message =
-                                  'NÃ£o foi possÃ­vel baixar. Verifique a internet e tente novamente.';
+                                  'NÃƒÂ£o foi possÃƒÂ­vel baixar. Verifique a internet e tente novamente.';
                             });
                           }
                         },
@@ -1515,7 +1667,7 @@ class _HomeScreenState extends State<HomeScreen> {
             if (!dialogContext.mounted) return;
             setDialogState(() {
               loading = false;
-              message = 'NÃ£o foi possÃ­vel carregar favoritos.';
+              message = 'NÃƒÂ£o foi possÃƒÂ­vel carregar favoritos.';
             });
           }
         }
@@ -1545,7 +1697,7 @@ class _HomeScreenState extends State<HomeScreen> {
             if (!dialogContext.mounted) return;
             setDialogState(() {
               routing = false;
-              message = 'NÃ£o foi possÃ­vel carregar o mapa offline.';
+              message = 'NÃƒÂ£o foi possÃƒÂ­vel carregar o mapa offline.';
             });
             return;
           }
@@ -1568,7 +1720,7 @@ class _HomeScreenState extends State<HomeScreen> {
           setDialogState(() {
             routing = false;
             message = route == null
-                ? 'Rota indisponÃ­vel neste mapa offline.'
+                ? 'Rota indisponÃƒÂ­vel neste mapa offline.'
                 : 'Rota para ${place.name} ativa.';
           });
 
@@ -1590,7 +1742,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
             final instruction = _dashboardRouteInstruction(provider);
             return AlertDialog(
-              title: const Text('NavegaÃ§Ã£o'),
+              title: const Text('NavegaÃƒÂ§ÃƒÂ£o'),
               content: SizedBox(
                 width: 520,
                 child: Column(
@@ -1996,7 +2148,7 @@ class _FuelGaugeCard extends StatelessWidget {
                         ]),
                     const SizedBox(height: 8),
                     Text(
-                      'Nivel de combustivel',
+                      'NÃƒÂ­vel de combustÃƒÂ­vel',
                       style:
                           TextStyle(color: colors.secondaryText, fontSize: 14),
                     ),
@@ -3823,7 +3975,7 @@ class _TripPanel extends StatelessWidget {
                   children: [
                     _TripLine(
                       Icons.route,
-                      'DistÃ¢ncia',
+                      'DistÃƒÂ¢ncia',
                       distance,
                       'km',
                       dense: dense,
@@ -3837,7 +3989,7 @@ class _TripPanel extends StatelessWidget {
                     ),
                     _TripLine(
                       Icons.local_gas_station,
-                      'Consumo medio',
+                      'Consumo mÃƒÂ©dio',
                       consumption,
                       'km/L',
                       dense: dense,
@@ -4180,7 +4332,7 @@ class _NavigationRouteCard extends StatelessWidget {
         final dense = constraints.maxHeight < 95 || constraints.maxWidth < 190;
         final title = instruction?.title ?? (hasRoute ? 'ROTA ATIVA' : 'ROTAS');
         final detail =
-            instruction?.detail ?? destination ?? 'Favoritos e navegaÃ§Ã£o';
+            instruction?.detail ?? destination ?? 'Favoritos e navegaÃƒÂ§ÃƒÂ£o';
 
         return Material(
           color: Colors.transparent,

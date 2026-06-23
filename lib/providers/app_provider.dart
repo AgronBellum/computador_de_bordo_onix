@@ -229,6 +229,55 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> answerVoiceAssistantCommand(String command) async {
+    final normalized = command
+        .toLowerCase()
+        .replaceAll(RegExp(r'[áàâã]'), 'a')
+        .replaceAll(RegExp(r'[éê]'), 'e')
+        .replaceAll(RegExp(r'[í]'), 'i')
+        .replaceAll(RegExp(r'[óôõ]'), 'o')
+        .replaceAll(RegExp(r'[ú]'), 'u')
+        .replaceAll('ç', 'c');
+
+    final trip = _activeTrip;
+    if (trip == null) {
+      await _audio.playManualNumbers();
+      return;
+    }
+
+    final fuelPercent = (fuelPercentage * 100).round().clamp(0, 100);
+    final autonomyKm = trip.estimatedRange.round().clamp(0, 999999);
+
+    if (normalized.contains('combust') ||
+        normalized.contains('gasolina') ||
+        normalized.contains('tanque')) {
+      await _audio.playAssistantFuelOnly(fuelPercent);
+      return;
+    }
+
+    if (normalized.contains('autonomia') ||
+        normalized.contains('quilometro') ||
+        normalized.contains('alcance')) {
+      await _audio.playAssistantAutonomy(autonomyKm);
+      return;
+    }
+
+    if (normalized.contains('como estamos') ||
+        normalized.contains('resumo') ||
+        normalized.contains('status')) {
+      await _audio.playAssistantFuelSummary(
+        fuelPercent: fuelPercent,
+        autonomyKm: autonomyKm,
+      );
+      return;
+    }
+
+    await _audio.playAssistantFuelSummary(
+      fuelPercent: fuelPercent,
+      autonomyKm: autonomyKm,
+    );
+  }
+
   Future<void> setDrivingMode(String mode) async {
     if (mode != 'city' && mode != 'trip') return;
     if (_drivingMode == mode) return;
@@ -514,7 +563,7 @@ class AppProvider extends ChangeNotifier {
     if (_activeTrip == null) return;
 
     if (newOdometer < _activeTrip!.currentOdometer) {
-      _statusMessage = 'KM nÃ£o pode ser menor que o atual';
+      _statusMessage = 'KM não pode ser menor que o atual';
       notifyListeners();
       return;
     }
@@ -615,7 +664,7 @@ class AppProvider extends ChangeNotifier {
     final hasPermission = await _gps.requestPermission();
 
     if (!hasPermission) {
-      _statusMessage = 'PermissÃ£o de GPS negada - verifique configuraÃ§Ãµes';
+      _statusMessage = 'Permissão de GPS negada - verifique configurações';
       notifyListeners();
       return;
     }

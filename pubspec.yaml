@@ -1,4 +1,4 @@
-name: combustivel
+﻿name: combustivel
 description: App de multimidia para carro - calculo de autonomia com GPS offline
 
 publish_to: 'none'
@@ -17,6 +17,8 @@ dependencies:
   provider: ^6.1.1
   shared_preferences: ^2.2.2
   audioplayers: ^6.1.0
+  speech_to_text: ^7.0.0
+  video_player: ^2.9.2
   cupertino_icons: ^1.0.6
 
 dev_dependencies:
@@ -36,5 +38,8 @@ flutter:
   assets:
     - assets/audio/
     - assets/images/
+    - assets/videos/
     - assets/maps/pelotas_roads.json
     - assets/maps/rs_sul_region.json
+
+

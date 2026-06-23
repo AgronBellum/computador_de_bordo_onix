@@ -540,9 +540,8 @@ class _AddFuelScreenState extends State<AddFuelScreen> {
                     style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
-                      color: range > 0
-                          ? Colors.orange.shade400
-                          : Colors.white24,
+                      color:
+                          range > 0 ? Colors.orange.shade400 : Colors.white24,
                     ),
                   ),
                 ],
@@ -720,7 +719,7 @@ class _AddFuelScreenState extends State<AddFuelScreen> {
     final lastKm =
         provider.activeTrip?.currentOdometer ?? provider.lastOdometer;
 
-    if (lastKm != null && odometer < lastKm) {
+    if (lastKm != null && odometer < lastKm - 0.01) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('KM não pode ser menor que a última registrada'),
