@@ -71,7 +71,7 @@ class _BluetoothLabScreenState extends State<BluetoothLabScreen> {
     _addLog('Prefs carregadas. Ultimo MAC: ${lastMac ?? "--"}');
     if (autoReconnect && lastMac != null) {
       _addLog(
-          'Auto reconectar estÃ¡ ativado, mas nÃ£o dispara durante diagnÃ³stico para evitar loop de pareamento. Use RECONECTAR ULTIMO.');
+          'Auto reconectar está ativado, mas não dispara durante diagnóstico para evitar loop de pareamento. Use RECONECTAR ULTIMO.');
     }
   }
 
@@ -93,7 +93,7 @@ class _BluetoothLabScreenState extends State<BluetoothLabScreen> {
         _loadingStatus = false;
       });
       _addLog(
-        'Status: disponÃ­vel=${_yes(status["available"])} ligado=${_yes(status["enabled"])} permissÃµes=${_yes(status["permissionsGranted"])} sdk=${status["sdk"] ?? "--"}',
+        'Status: disponível=${_yes(status["available"])} ligado=${_yes(status["enabled"])} permissões=${_yes(status["permissionsGranted"])} sdk=${status["sdk"] ?? "--"}',
       );
     } catch (error) {
       if (!mounted) return;
@@ -104,7 +104,7 @@ class _BluetoothLabScreenState extends State<BluetoothLabScreen> {
 
   Future<void> _requestPermissions() async {
     setState(() => _requestingPermissions = true);
-    _addLog('Solicitando permissÃµes Bluetooth/LocalizaÃ§Ã£o...');
+    _addLog('Solicitando permissões Bluetooth/Localização...');
     try {
       final granted = await _obd.requestPermissions();
       _addLog(granted ? 'Permissoes concedidas' : 'Permissoes negadas');
@@ -211,7 +211,7 @@ class _BluetoothLabScreenState extends State<BluetoothLabScreen> {
     setState(() => _pairing = true);
     _addLog('Pareamento solicitado: $mac usando PIN $pin');
     _addLog(
-      'Se o Android abrir janela de PIN, confirme com $pin. Se nÃ£o abrir, o app tenta informar o PIN automaticamente.',
+      'Se o Android abrir janela de PIN, confirme com $pin. Se não abrir, o app tenta informar o PIN automaticamente.',
     );
     try {
       final device = await _obd.pairDeviceByAddress(mac, pin: pin);
@@ -236,7 +236,7 @@ class _BluetoothLabScreenState extends State<BluetoothLabScreen> {
     }
 
     setState(() => _connecting = true);
-    _addLog('${auto ? "Auto reconexÃ£o" : "ConexÃ£o manual"} por MAC: $mac');
+    _addLog('${auto ? "Auto reconexão" : "Conexão manual"} por MAC: $mac');
     _addLog(
         'Tentando parear se necessario e conectar SPP UUID 00001101-0000-1000-8000-00805F9B34FB');
     try {
@@ -298,7 +298,7 @@ class _BluetoothLabScreenState extends State<BluetoothLabScreen> {
     return RegExp(r'^([0-9A-F]{2}:){5}[0-9A-F]{2}$').hasMatch(value);
   }
 
-  String _yes(dynamic value) => value == true ? 'sim' : 'nÃ£o';
+  String _yes(dynamic value) => value == true ? 'sim' : 'não';
 
   String _deviceLine(ObdBluetoothDevice device) {
     return '${device.name} | ${device.address} | ${device.transport} | ${device.bondLabel} | RSSI: ${device.rssi?.toString() ?? "n/d"}';
@@ -378,15 +378,15 @@ class _BluetoothLabScreenState extends State<BluetoothLabScreen> {
             ],
           ),
           const SizedBox(height: 12),
-          _statusLine('Bluetooth disponÃ­vel', _yes(_status['available'])),
+          _statusLine('Bluetooth disponível', _yes(_status['available'])),
           _statusLine('Bluetooth ligado', _yes(_status['enabled'])),
           _statusLine(
               'Permissoes concedidas', _yes(_status['permissionsGranted'])),
-          _statusLine('PermissÃ£o CONNECT', _yes(_status['connectPermission'])),
-          _statusLine('PermissÃ£o SCAN', _yes(_status['scanPermission'])),
-          _statusLine('PermissÃ£o de localizaÃ§Ã£o',
-              _yes(_status['locationPermission'])),
-          _statusLine('LocalizaÃ§Ã£o ligada', _yes(_status['locationEnabled'])),
+          _statusLine('Permissão CONNECT', _yes(_status['connectPermission'])),
+          _statusLine('Permissão SCAN', _yes(_status['scanPermission'])),
+          _statusLine(
+              'Permissão de localização', _yes(_status['locationPermission'])),
+          _statusLine('Localização ligada', _yes(_status['locationEnabled'])),
           _statusLine('Android SDK', '${_status['sdk'] ?? '--'}'),
           _statusLine('Pareados Android', '${_status['bondedCount'] ?? '--'}'),
           _statusLine('Conectado SPP', _yes(_status['connected'])),
@@ -400,7 +400,7 @@ class _BluetoothLabScreenState extends State<BluetoothLabScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _sectionTitle('ConexÃ£o por MAC'),
+          _sectionTitle('Conexão por MAC'),
           TextField(
             controller: _macController,
             textCapitalization: TextCapitalization.characters,

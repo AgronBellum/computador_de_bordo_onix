@@ -253,12 +253,12 @@ class _HomeScreenState extends State<HomeScreen> {
                         Expanded(
                           child: _MetricCard(
                             icon: Icons.bar_chart,
-                            title: 'CONSUMO MÃƒâ€°DIO GERAL',
+                            title: 'CONSUMO MÉDIO GERAL',
                             value: _decimal(trip.consumptionPerKm, 1),
                             unit: 'km/L',
                             onTap: () => _showNumberEditDialog(
                               context: context,
-                              title: 'Alterar consumo mÃƒÂ©dio',
+                              title: 'Alterar consumo médio',
                               currentValue: trip.consumptionPerKm,
                               suffix: 'km/L',
                               onSave: provider.setConsumption,
@@ -435,7 +435,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             IconButton(
-              tooltip: 'ConfiguraÃƒÂ§ÃƒÂµes',
+              tooltip: 'Configurações',
               onPressed: () => _showSettingsDialog(context, provider),
               icon: Icon(Icons.settings,
                   color: colors.secondaryIcon, size: compactHeader ? 23 : 25),
@@ -546,7 +546,7 @@ class _HomeScreenState extends State<HomeScreen> {
         Expanded(
           child: _ActionCard(
             icon: Icons.oil_barrel,
-            title: 'Ãƒâ€œLEO',
+            title: 'ÓLEO',
             subtitle: _oilActionSubtitle(provider),
             color: _oilActionColor(provider),
             onTap: () => _showOilChangeDialog(context, provider),
@@ -600,21 +600,18 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     try {
-      final available = await speech.initialize(
-        onError: (_) {},
-        onStatus: (_) {},
-      );
-      if (!available) {
-        await answer('status');
-        return;
+      try {
+        controller = VideoPlayerController.asset('assets/videos/ouvindo.mp4');
+        _voiceVideoController = controller;
+        await controller.initialize();
+        await controller.setVolume(0);
+        await controller.setLooping(true);
+        await controller.play();
+      } catch (_) {
+        await controller?.dispose();
+        controller = null;
+        _voiceVideoController = null;
       }
-
-      controller = VideoPlayerController.asset('assets/videos/ouvindo.mp4');
-      _voiceVideoController = controller;
-      await controller.initialize();
-      await controller.setVolume(0);
-      await controller.setLooping(true);
-      await controller.play();
 
       if (!mounted) return;
       final activeController = controller;
@@ -632,14 +629,18 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  FittedBox(
-                    fit: BoxFit.cover,
-                    child: SizedBox(
-                      width: activeController.value.size.width,
-                      height: activeController.value.size.height,
-                      child: VideoPlayer(activeController),
-                    ),
-                  ),
+                  if (activeController != null &&
+                      activeController.value.isInitialized)
+                    FittedBox(
+                      fit: BoxFit.cover,
+                      child: SizedBox(
+                        width: activeController.value.size.width,
+                        height: activeController.value.size.height,
+                        child: VideoPlayer(activeController),
+                      ),
+                    )
+                  else
+                    const _VoiceListeningFallback(),
                   Positioned(
                     left: 0,
                     right: 0,
@@ -675,6 +676,16 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       );
+
+      await Future<void>.delayed(const Duration(milliseconds: 180));
+      final available = await speech.initialize(
+        onError: (_) {},
+        onStatus: (_) {},
+      );
+      if (!available) {
+        await answer('status');
+        return;
+      }
 
       var recognized = '';
       final done = Completer<void>();
@@ -829,7 +840,7 @@ class _HomeScreenState extends State<HomeScreen> {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: const Text('Troca de ÃƒÂ³leo'),
+              title: const Text('Troca de óleo'),
               content: SizedBox(
                 width: 420,
                 child: SingleChildScrollView(
@@ -852,7 +863,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         keyboardType: const TextInputType.numberWithOptions(
                             decimal: true),
                         decoration: const InputDecoration(
-                          labelText: 'KM da prÃƒÂ³xima troca',
+                          labelText: 'KM da próxima troca',
                           prefixIcon: Icon(Icons.flag),
                           suffixText: 'km',
                         ),
@@ -862,7 +873,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         controller: typeController,
                         textCapitalization: TextCapitalization.characters,
                         decoration: const InputDecoration(
-                          labelText: 'Tipo de ÃƒÂ³leo',
+                          labelText: 'Tipo de óleo',
                           hintText: 'Ex: 5W30, 5W40, 10W40',
                           prefixIcon: Icon(Icons.oil_barrel),
                         ),
@@ -870,7 +881,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       const SizedBox(height: 8),
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
-                        title: const Text('Filtro de ÃƒÂ³leo trocado'),
+                        title: const Text('Filtro de óleo trocado'),
                         value: filterChanged,
                         onChanged: (value) =>
                             setDialogState(() => filterChanged = value),
@@ -905,8 +916,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     }
                     if (nextKm < lastKm) {
                       setDialogState(
-                        () => error =
-                            'A prÃƒÂ³xima troca deve ser maior ou igual',
+                        () => error = 'A próxima troca deve ser maior ou igual',
                       );
                       return;
                     }
@@ -1046,7 +1056,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
-                      'ConfiguraÃƒÂ§ÃƒÂµes',
+                      'Configurações',
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.w700,
@@ -1075,7 +1085,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                       Theme.of(context).colorScheme.onSurface,
                                 ),
                                 decoration: const InputDecoration(
-                                  labelText: 'Nome do veÃƒÂ­culo',
+                                  labelText: 'Nome do veículo',
                                   prefixIcon: Icon(Icons.directions_car_filled),
                                 ),
                               ),
@@ -1125,7 +1135,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                       Theme.of(context).colorScheme.onSurface,
                                 ),
                                 decoration: const InputDecoration(
-                                  labelText: 'PreÃƒÂ§o mÃƒÂ©dio gasolina',
+                                  labelText: 'Preço médio gasolina',
                                   prefixText: 'R\$ ',
                                   suffixText: '/L',
                                   prefixIcon: Icon(Icons.local_gas_station),
@@ -1386,7 +1396,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               : () async {
                                   setDialogState(() {
                                     busy = true;
-                                    message = 'Buscando paÃƒÂ­s...';
+                                    message = 'Buscando país...';
                                   });
                                   try {
                                     final result =
@@ -1403,13 +1413,13 @@ class _HomeScreenState extends State<HomeScreen> {
                                       selectedCity = null;
                                       busy = false;
                                       message = result.isEmpty
-                                          ? 'Nenhum paÃƒÂ­s encontrado.'
-                                          : 'Escolha o paÃƒÂ­s.';
+                                          ? 'Nenhum país encontrado.'
+                                          : 'Escolha o país.';
                                     });
                                   } catch (_) {
                                     setDialogState(() {
                                       busy = false;
-                                      message = 'Falha ao buscar paÃƒÂ­s.';
+                                      message = 'Falha ao buscar país.';
                                     });
                                   }
                                 },
@@ -1606,7 +1616,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             setDialogState(() {
                               busy = false;
                               message =
-                                  'NÃƒÂ£o foi possÃƒÂ­vel baixar. Verifique a internet e tente novamente.';
+                                  'Não foi possível baixar. Verifique a internet e tente novamente.';
                             });
                           }
                         },
@@ -1667,7 +1677,7 @@ class _HomeScreenState extends State<HomeScreen> {
             if (!dialogContext.mounted) return;
             setDialogState(() {
               loading = false;
-              message = 'NÃƒÂ£o foi possÃƒÂ­vel carregar favoritos.';
+              message = 'Não foi possível carregar favoritos.';
             });
           }
         }
@@ -1697,7 +1707,7 @@ class _HomeScreenState extends State<HomeScreen> {
             if (!dialogContext.mounted) return;
             setDialogState(() {
               routing = false;
-              message = 'NÃƒÂ£o foi possÃƒÂ­vel carregar o mapa offline.';
+              message = 'Não foi possível carregar o mapa offline.';
             });
             return;
           }
@@ -1720,7 +1730,7 @@ class _HomeScreenState extends State<HomeScreen> {
           setDialogState(() {
             routing = false;
             message = route == null
-                ? 'Rota indisponÃƒÂ­vel neste mapa offline.'
+                ? 'Rota indisponível neste mapa offline.'
                 : 'Rota para ${place.name} ativa.';
           });
 
@@ -1742,7 +1752,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
             final instruction = _dashboardRouteInstruction(provider);
             return AlertDialog(
-              title: const Text('NavegaÃƒÂ§ÃƒÂ£o'),
+              title: const Text('Navegação'),
               content: SizedBox(
                 width: 520,
                 child: Column(
@@ -2148,7 +2158,7 @@ class _FuelGaugeCard extends StatelessWidget {
                         ]),
                     const SizedBox(height: 8),
                     Text(
-                      'NÃƒÂ­vel de combustÃƒÂ­vel',
+                      'Nível de combustível',
                       style:
                           TextStyle(color: colors.secondaryText, fontSize: 14),
                     ),
@@ -3975,7 +3985,7 @@ class _TripPanel extends StatelessWidget {
                   children: [
                     _TripLine(
                       Icons.route,
-                      'DistÃƒÂ¢ncia',
+                      'Distância',
                       distance,
                       'km',
                       dense: dense,
@@ -3989,7 +3999,7 @@ class _TripPanel extends StatelessWidget {
                     ),
                     _TripLine(
                       Icons.local_gas_station,
-                      'Consumo mÃƒÂ©dio',
+                      'Consumo médio',
                       consumption,
                       'km/L',
                       dense: dense,
@@ -4332,7 +4342,7 @@ class _NavigationRouteCard extends StatelessWidget {
         final dense = constraints.maxHeight < 95 || constraints.maxWidth < 190;
         final title = instruction?.title ?? (hasRoute ? 'ROTA ATIVA' : 'ROTAS');
         final detail =
-            instruction?.detail ?? destination ?? 'Favoritos e navegaÃƒÂ§ÃƒÂ£o';
+            instruction?.detail ?? destination ?? 'Favoritos e navegação';
 
         return Material(
           color: Colors.transparent,
@@ -4911,4 +4921,55 @@ double _angleDelta(double from, double to) {
   var delta = (to - from + 540) % 360 - 180;
   if (delta < -180) delta += 360;
   return delta;
+}
+
+class _VoiceListeningFallback extends StatelessWidget {
+  const _VoiceListeningFallback();
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        gradient: RadialGradient(
+          center: Alignment.center,
+          radius: 0.88,
+          colors: [Color(0xFF072A4A), Color(0xFF02060D), Colors.black],
+          stops: [0, 0.58, 1],
+        ),
+      ),
+      child: Center(
+        child: TweenAnimationBuilder<double>(
+          tween: Tween(begin: 0.72, end: 1),
+          duration: const Duration(milliseconds: 760),
+          curve: Curves.easeInOut,
+          builder: (context, value, child) {
+            return Transform.scale(
+              scale: value,
+              child: Container(
+                width: 190,
+                height: 190,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: const Color(0xFF05223D),
+                  border: Border.all(color: _HomeScreenState._blue, width: 2),
+                  boxShadow: [
+                    BoxShadow(
+                      color: _HomeScreenState._blue.withValues(alpha: 0.42),
+                      blurRadius: 42,
+                      spreadRadius: 12,
+                    ),
+                  ],
+                ),
+                child: const Icon(
+                  Icons.mic,
+                  color: Colors.white,
+                  size: 88,
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
 }
