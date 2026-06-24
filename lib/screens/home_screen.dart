@@ -36,7 +36,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _wakeWordStopRequested = false;
   AppLifecycleState _lifecycleState = AppLifecycleState.resumed;
   bool? _lastSyncedWakeWordEnabled;
-  bool? _lastSyncedBubbleEnabled;
+  bool? _lastSyncedBubbleVisible;
+  Timer? _wakeWordWatchdogTimer;
   VideoPlayerController? _voiceVideoController;
 
   static const MethodChannel _nativeChannel =
@@ -56,6 +57,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _placesCacheFuture = _warmPlacesCache();
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
@@ -67,6 +69,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _lifecycleState = state;
     super.didChangeAppLifecycleState(state);
+    if (!mounted) return;
+    final provider = context.read<AppProvider>();
+    _syncAssistantAmbient(provider);
   }
 
   void _syncAssistantAmbient(AppProvider provider) {
@@ -74,15 +79,46 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _lastSyncedWakeWordEnabled = provider.wakeWordEnabled;
       if (provider.wakeWordEnabled) {
         _startWakeWordLoop(provider);
+        _startWakeWordWatchdog();
       } else {
         _wakeWordStopRequested = true;
+        _stopWakeWordWatchdog();
       }
     }
 
-    if (_lastSyncedBubbleEnabled != provider.floatingAssistantBubbleEnabled) {
-      _lastSyncedBubbleEnabled = provider.floatingAssistantBubbleEnabled;
-      unawaited(_setAssistantBubble(provider.floatingAssistantBubbleEnabled));
+    final bubbleVisible = _shouldShowAssistantBubble(provider);
+    if (_lastSyncedBubbleVisible != bubbleVisible) {
+      _lastSyncedBubbleVisible = bubbleVisible;
+      unawaited(_setAssistantBubble(bubbleVisible));
     }
+
+    if (provider.wakeWordEnabled && !_wakeWordLoopActive) {
+      _startWakeWordLoop(provider);
+    }
+  }
+
+  bool _shouldShowAssistantBubble(AppProvider provider) {
+    return provider.floatingAssistantBubbleEnabled &&
+        _lifecycleState != AppLifecycleState.resumed;
+  }
+
+  void _startWakeWordWatchdog() {
+    _wakeWordWatchdogTimer ??= Timer.periodic(const Duration(seconds: 20), (_) {
+      if (!mounted) return;
+      final provider = context.read<AppProvider>();
+      if (!provider.wakeWordEnabled) {
+        _stopWakeWordWatchdog();
+        return;
+      }
+      if (!_wakeWordLoopActive) {
+        _startWakeWordLoop(provider);
+      }
+    });
+  }
+
+  void _stopWakeWordWatchdog() {
+    _wakeWordWatchdogTimer?.cancel();
+    _wakeWordWatchdogTimer = null;
   }
 
   void _startWakeWordLoop(AppProvider provider) {
@@ -113,6 +149,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         }
       } catch (error) {
         debugPrint('[VoiceAssistant] wake loop error: $error');
+        await OfflineVoiceService.instance.dispose();
       } finally {
         _wakeWordLoopActive = false;
         if (mounted && provider.wakeWordEnabled && !_wakeWordStopRequested) {
@@ -201,6 +238,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _wakeWordStopRequested = true;
+    _stopWakeWordWatchdog();
+    unawaited(_setAssistantBubble(false));
     _clockTimer?.cancel();
     _odometerController.dispose();
     super.dispose();

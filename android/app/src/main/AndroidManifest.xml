@@ -81,7 +81,8 @@
         </service>
         <service
             android:name=".AssistantBubbleService"
-            android:exported="false" />
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
         <meta-data
             android:name="flutterEmbedding"

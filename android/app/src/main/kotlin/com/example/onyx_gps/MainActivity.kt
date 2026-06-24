@@ -149,7 +149,11 @@ class MainActivity : FlutterActivity() {
     private fun startAssistantBubble() {
         if (!canDrawOverlays()) return
         val intent = Intent(this, AssistantBubbleService::class.java)
-        startService(intent)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
     }
 
     private fun stopAssistantBubble() {

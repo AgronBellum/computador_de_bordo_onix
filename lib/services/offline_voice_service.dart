@@ -197,7 +197,7 @@ class OfflineVoiceService {
       onStatus?.call('Ouvindo offline...');
       await service.start(onRecognitionError: (error) {
         if (!done.isCompleted) done.complete();
-      });
+      }).timeout(const Duration(seconds: 3));
 
       await done.future.timeout(listenFor, onTimeout: () {});
       await service.stop().timeout(
