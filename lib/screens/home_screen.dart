@@ -12,6 +12,7 @@ import '../models/offline_map.dart';
 import '../models/trip_model.dart';
 import '../providers/app_provider.dart';
 import '../services/offline_map_service.dart';
+import '../services/offline_voice_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -711,6 +712,29 @@ class _HomeScreenState extends State<HomeScreen> {
       );
 
       await Future<void>.delayed(const Duration(milliseconds: 180));
+      final offlineResult = await OfflineVoiceService.instance.listenForCommand(
+        listenFor: const Duration(seconds: 7),
+        onStatus: (status) => voiceStatus.value = status,
+        onPartial: (partial) {
+          if (partial.trim().isNotEmpty) {
+            recognizedPreview.value = 'Entendi offline: $partial';
+          }
+        },
+      );
+      if (offlineResult.hasText) {
+        await answer(offlineResult.text);
+        return;
+      }
+      if (offlineResult.error == null) {
+        voiceStatus.value = 'Não ouvi comando offline';
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+        await answer('status');
+        return;
+      }
+      voiceStatus.value = 'Offline indisponível, tentando Android...';
+      recognizedPreview.value = offlineResult.error ?? '';
+      await Future<void>.delayed(const Duration(milliseconds: 900));
+
       final voicePermission = await _requestVoicePermission();
       if (!voicePermission) {
         voiceStatus.value = 'Permissão não confirmada, tentando ouvir...';

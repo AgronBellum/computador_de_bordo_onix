@@ -20,7 +20,8 @@ dependencies:
   speech_to_text: ^7.0.0
   video_player: ^2.9.2
   cupertino_icons: ^1.0.6
-
+  vosk_flutter:
+    path: third_party/vosk_flutter
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -39,6 +40,7 @@ flutter:
     - assets/audio/
     - assets/images/
     - assets/videos/
+    - assets/vosk/
     - assets/maps/pelotas_roads.json
     - assets/maps/rs_sul_region.json
 
