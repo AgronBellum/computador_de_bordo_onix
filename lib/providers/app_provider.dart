@@ -70,6 +70,8 @@ class AppProvider extends ChangeNotifier {
   bool _isLoading = true;
   bool _isDarkMode = true;
   bool _soundsEnabled = true;
+  bool _wakeWordEnabled = false;
+  bool _floatingAssistantBubbleEnabled = false;
   bool _autoGpsStarting = false;
   bool _lowFuelAlertPlayed = false;
   bool _reserveFuelAlertPlayed = false;
@@ -218,6 +220,8 @@ class AppProvider extends ChangeNotifier {
         'sao lourenco do sul',
         'sao lourenco',
         'sao lorenço',
+        'santa lorenzo',
+        'santa lorenco',
         'sao lorenco',
         'sao lourenço',
         'sao lourenso',
@@ -254,6 +258,8 @@ class AppProvider extends ChangeNotifier {
   bool get isLoading => _isLoading;
   bool get isDarkMode => _isDarkMode;
   bool get soundsEnabled => _soundsEnabled;
+  bool get wakeWordEnabled => _wakeWordEnabled;
+  bool get floatingAssistantBubbleEnabled => _floatingAssistantBubbleEnabled;
   double get gpsDistance => _gpsDistance;
   int get gpsUpdateCount => _gpsUpdateCount;
   int get gpsRawPositionCount => _gpsRawPositionCount;
@@ -358,6 +364,9 @@ class AppProvider extends ChangeNotifier {
     _fuelPrice = prefs.getDouble('fuel_price') ?? 5.79;
     _tankCapacityLiters = prefs.getDouble('tank_capacity_liters') ?? 0;
     _soundsEnabled = prefs.getBool('sounds_enabled') ?? true;
+    _wakeWordEnabled = prefs.getBool('wake_word_enabled') ?? false;
+    _floatingAssistantBubbleEnabled =
+        prefs.getBool('floating_assistant_bubble_enabled') ?? false;
     _audio.setEnabled(_soundsEnabled);
     _drivingMode = prefs.getString('driving_mode') ?? 'city';
     _vehicleName = prefs.getString('vehicle_name') ?? 'ONIX';
@@ -449,6 +458,24 @@ class AppProvider extends ChangeNotifier {
     await prefs.setString('voice_destination_aliases', jsonEncode(next));
     await OfflineVoiceService.instance.reloadGrammar();
     _statusMessage = 'Frases do assistente salvas';
+    notifyListeners();
+  }
+
+  Future<void> saveAssistantAmbientSettings({
+    required bool wakeWordEnabled,
+    required bool floatingBubbleEnabled,
+  }) async {
+    _wakeWordEnabled = wakeWordEnabled;
+    _floatingAssistantBubbleEnabled = floatingBubbleEnabled;
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('wake_word_enabled', _wakeWordEnabled);
+    await prefs.setBool(
+      'floating_assistant_bubble_enabled',
+      _floatingAssistantBubbleEnabled,
+    );
+
+    _statusMessage = 'Assistente atualizado';
     notifyListeners();
   }
 
@@ -649,6 +676,8 @@ class AppProvider extends ChangeNotifier {
         .replaceAll('crolo fi', 'crolofe')
         .replaceAll('crolo f', 'crolofe')
         .replaceAll('camboata', 'camboata')
+        .replaceAll('santa lorenzo', 'sao lourenco')
+        .replaceAll('santa lorenco', 'sao lourenco')
         .replaceAll('sao lorenco', 'sao lourenco')
         .replaceAll('sao lourenso', 'sao lourenco')
         .replaceAll('sao lorenzo', 'sao lourenco')

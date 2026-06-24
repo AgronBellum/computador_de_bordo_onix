@@ -21,7 +21,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final TextEditingController _odometerController = TextEditingController();
   final OfflineMapService _offlineMapService = OfflineMapService();
   Timer? _clockTimer;
@@ -32,6 +32,11 @@ class _HomeScreenState extends State<HomeScreen> {
   List<SavedMapPlace> _cachedPlaces = const [];
   bool _showLocalMapPreview = false;
   bool _voiceAssistantBusy = false;
+  bool _wakeWordLoopActive = false;
+  bool _wakeWordStopRequested = false;
+  AppLifecycleState _lifecycleState = AppLifecycleState.resumed;
+  bool? _lastSyncedWakeWordEnabled;
+  bool? _lastSyncedBubbleEnabled;
   VideoPlayerController? _voiceVideoController;
 
   static const MethodChannel _nativeChannel =
@@ -56,6 +61,126 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       setState(() => _now = DateTime.now());
     });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _lifecycleState = state;
+    super.didChangeAppLifecycleState(state);
+  }
+
+  void _syncAssistantAmbient(AppProvider provider) {
+    if (_lastSyncedWakeWordEnabled != provider.wakeWordEnabled) {
+      _lastSyncedWakeWordEnabled = provider.wakeWordEnabled;
+      if (provider.wakeWordEnabled) {
+        _startWakeWordLoop(provider);
+      } else {
+        _wakeWordStopRequested = true;
+      }
+    }
+
+    if (_lastSyncedBubbleEnabled != provider.floatingAssistantBubbleEnabled) {
+      _lastSyncedBubbleEnabled = provider.floatingAssistantBubbleEnabled;
+      unawaited(_setAssistantBubble(provider.floatingAssistantBubbleEnabled));
+    }
+  }
+
+  void _startWakeWordLoop(AppProvider provider) {
+    if (_wakeWordLoopActive) return;
+    _wakeWordStopRequested = false;
+    _wakeWordLoopActive = true;
+
+    unawaited(Future<void>(() async {
+      try {
+        while (mounted && provider.wakeWordEnabled && !_wakeWordStopRequested) {
+          if (_voiceAssistantBusy) {
+            await Future<void>.delayed(const Duration(milliseconds: 500));
+            continue;
+          }
+
+          final woke = await OfflineVoiceService.instance.listenForWakeWord(
+            listenFor: const Duration(seconds: 4),
+          );
+          if (!mounted || !provider.wakeWordEnabled || _wakeWordStopRequested) {
+            break;
+          }
+          if (woke) {
+            await _handleWakeWordDetected(provider);
+            await Future<void>.delayed(const Duration(milliseconds: 900));
+          } else {
+            await Future<void>.delayed(const Duration(milliseconds: 150));
+          }
+        }
+      } catch (error) {
+        debugPrint('[VoiceAssistant] wake loop error: $error');
+      } finally {
+        _wakeWordLoopActive = false;
+        if (mounted && provider.wakeWordEnabled && !_wakeWordStopRequested) {
+          await Future<void>.delayed(const Duration(seconds: 1));
+          _startWakeWordLoop(provider);
+        }
+      }
+    }));
+  }
+
+  Future<void> _handleWakeWordDetected(AppProvider provider) async {
+    if (_voiceAssistantBusy) return;
+    if (_lifecycleState == AppLifecycleState.resumed && mounted) {
+      await _startVoiceAssistant(provider);
+      return;
+    }
+    await _listenAndAnswerInBackground(provider);
+  }
+
+  Future<void> _listenAndAnswerInBackground(AppProvider provider) async {
+    if (_voiceAssistantBusy) return;
+    _voiceAssistantBusy = true;
+    try {
+      final result = await OfflineVoiceService.instance.listenForCommand(
+        listenFor: const Duration(seconds: 7),
+      );
+      final command = result.text.trim().isNotEmpty
+          ? result.text.trim()
+          : result.partial.trim();
+      if (command.isNotEmpty) {
+        debugPrint('[VoiceAssistant] background command="$command"');
+        await provider.answerVoiceAssistantCommand(command);
+      } else {
+        await provider.answerVoiceAssistantCommand('status');
+      }
+    } catch (error) {
+      debugPrint('[VoiceAssistant] background answer error: $error');
+    } finally {
+      _voiceAssistantBusy = false;
+    }
+  }
+
+  Future<bool> _requestOverlayPermissionIfNeeded() async {
+    try {
+      final granted =
+          await _nativeChannel.invokeMethod<bool>('canDrawOverlays');
+      if (granted == true) return true;
+      await _nativeChannel.invokeMethod('requestOverlayPermission');
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _setAssistantBubble(bool enabled) async {
+    try {
+      if (enabled) {
+        final granted =
+            await _nativeChannel.invokeMethod<bool>('canDrawOverlays');
+        if (granted == true) {
+          await _nativeChannel.invokeMethod('startAssistantBubble');
+        }
+      } else {
+        await _nativeChannel.invokeMethod('stopAssistantBubble');
+      }
+    } catch (error) {
+      debugPrint('[VoiceAssistant] bubble error: $error');
+    }
   }
 
   Future<List<SavedMapPlace>> _warmPlacesCache() async {
@@ -90,6 +215,9 @@ class _HomeScreenState extends State<HomeScreen> {
       body: SafeArea(
         child: Consumer<AppProvider>(
           builder: (context, provider, child) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _syncAssistantAmbient(provider);
+            });
             if (provider.isLoading) {
               return const Center(
                 child: CircularProgressIndicator(color: _blue),
@@ -605,12 +733,11 @@ class _HomeScreenState extends State<HomeScreen> {
       if (command.trim().isNotEmpty) {
         recognizedPreview.value = 'Comando: ${command.trim()}';
       }
-      unawaited(Future<void>(() async {
-        await Future<void>.delayed(const Duration(milliseconds: 120));
-        debugPrint('[VoiceAssistant] dispatch provider command="$command"');
-        await provider.answerVoiceAssistantCommand(command);
-      }));
-      await Future<void>.delayed(const Duration(milliseconds: 220));
+      await Future<void>.delayed(const Duration(milliseconds: 180));
+      await closeDialog();
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      debugPrint('[VoiceAssistant] dispatch provider command="$command"');
+      await provider.answerVoiceAssistantCommand(command);
     }
 
     try {
@@ -1165,6 +1292,8 @@ class _HomeScreenState extends State<HomeScreen> {
         item.id: TextEditingController(text: item.phrases),
     };
     var soundsEnabled = provider.soundsEnabled;
+    var wakeWordEnabled = provider.wakeWordEnabled;
+    var floatingBubbleEnabled = provider.floatingAssistantBubbleEnabled;
     var mapVehicleIcon = provider.mapVehicleIcon;
 
     showDialog(
@@ -1323,6 +1452,46 @@ class _HomeScreenState extends State<HomeScreen> {
                                 title: const Text('Sons e alertas'),
                               ),
                               const SizedBox(height: 8),
+                              SwitchListTile(
+                                contentPadding: EdgeInsets.zero,
+                                value: wakeWordEnabled,
+                                onChanged: (value) async {
+                                  if (value) {
+                                    await _requestVoicePermission();
+                                  }
+                                  setDialogState(() {
+                                    wakeWordEnabled = value;
+                                  });
+                                },
+                                secondary: const Icon(Icons.hearing),
+                                title: const Text('Ativar "Ei Pin"'),
+                                subtitle: const Text(
+                                  'Escuta offline para iniciar o assistente sem tocar no botão.',
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              SwitchListTile(
+                                contentPadding: EdgeInsets.zero,
+                                value: floatingBubbleEnabled,
+                                onChanged: (value) async {
+                                  if (value) {
+                                    await _requestOverlayPermissionIfNeeded();
+                                  } else {
+                                    await _nativeChannel
+                                        .invokeMethod('stopAssistantBubble')
+                                        .catchError((_) {});
+                                  }
+                                  setDialogState(() {
+                                    floatingBubbleEnabled = value;
+                                  });
+                                },
+                                secondary: const Icon(Icons.bubble_chart),
+                                title: const Text('Bolha do Pin'),
+                                subtitle: const Text(
+                                  'Mostra um botão flutuante para voltar ao app quando minimizar.',
+                                ),
+                              ),
+                              const SizedBox(height: 8),
                               DropdownButtonFormField<String>(
                                 initialValue: mapVehicleIcon,
                                 decoration: const InputDecoration(
@@ -1471,6 +1640,10 @@ class _HomeScreenState extends State<HomeScreen> {
                             for (final entry in voicePhraseControllers.entries)
                               entry.key: entry.value.text,
                           });
+                          await provider.saveAssistantAmbientSettings(
+                            wakeWordEnabled: wakeWordEnabled,
+                            floatingBubbleEnabled: floatingBubbleEnabled,
+                          );
 
                           if (dialogContext.mounted) {
                             closeDialog();
@@ -3801,7 +3974,7 @@ class _PelotasMapPainter extends CustomPainter {
         darkMode ? const Color(0xFF39D8B6) : const Color(0xFF168C78);
     final glowRoad =
         darkMode ? const Color(0xFF39D8B6) : const Color(0xFF168C78);
-    final gpsScale = _hasGps ? 5.8 : 1.0;
+    final gpsScale = (_hasGps ? 5.8 : 1.0) * 2.0;
     final paints = <int, Paint>{
       0: Paint()
         ..color = minorRoad.withValues(alpha: darkMode ? 0.55 : 0.65)

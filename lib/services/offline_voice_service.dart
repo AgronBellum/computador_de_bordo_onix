@@ -34,8 +34,36 @@ class OfflineVoiceService {
   Recognizer? _recognizer;
   SpeechService? _speechService;
   Future<void>? _initializing;
+  String? _activeGrammar;
+
+  static const String _commandGrammarMode = 'command';
+  static const String _wakeGrammarMode = 'wake';
+
+  static const List<String> wakeWordGrammar = [
+    'ei pin',
+    'e pin',
+    'hey pin',
+    'oi pin',
+    'ai pin',
+    'ei pim',
+    'e pim',
+    'hey pim',
+    'oi pim',
+    'ai pim',
+    'ei pino',
+    'e pino',
+    'oi pino',
+    'pin',
+    'pim',
+    '[unk]',
+  ];
 
   static const List<String> commandGrammar = [
+    'ei pin',
+    'e pin',
+    'hey pin',
+    'oi pin',
+    'pin',
     'combustivel',
     'gasolina',
     'tanque',
@@ -97,6 +125,8 @@ class OfflineVoiceService {
     'sao lorenco',
     'sao lourenso',
     'sao lorenzo',
+    'santa lorenzo',
+    'santa lorenco',
     'vamos para santa vitoria do palmar',
     'santa vitoria do palmar',
     'santa vitoria',
@@ -125,10 +155,12 @@ class OfflineVoiceService {
     Duration listenFor = const Duration(seconds: 6),
     void Function(String status)? onStatus,
     void Function(String partial)? onPartial,
+    bool useCommandGrammar = true,
   }) async {
     try {
       onStatus?.call('Carregando voz offline...');
       await warmUp();
+      if (useCommandGrammar) await _useCommandGrammar();
       final service = _speechService;
       if (service == null) {
         return const OfflineVoiceRecognitionResult(
@@ -172,6 +204,17 @@ class OfflineVoiceService {
             const Duration(milliseconds: 900),
             onTimeout: () => null,
           );
+      final finalText = _extractText(
+        await _recognizer?.getFinalResult().timeout(
+                  const Duration(milliseconds: 700),
+                  onTimeout: () => '{}',
+                ) ??
+            '{}',
+      );
+      if (finalText.isNotEmpty) {
+        bestResult = _pickBest(bestResult, finalText);
+        onPartial?.call(bestResult);
+      }
       await _recognizer?.reset();
       await partialSub.cancel();
       await resultSub.cancel();
@@ -195,6 +238,64 @@ class OfflineVoiceService {
         error: error.toString(),
       );
     }
+  }
+
+  Future<bool> listenForWakeWord({
+    Duration listenFor = const Duration(seconds: 4),
+    void Function(String status)? onStatus,
+  }) async {
+    await warmUp();
+    await _useWakeWordGrammar();
+    final result = await listenForCommand(
+      listenFor: listenFor,
+      onStatus: onStatus,
+      useCommandGrammar: false,
+    );
+    return _looksLikeWakeWord(result.text) ||
+        _looksLikeWakeWord(result.partial);
+  }
+
+  bool _looksLikeWakeWord(String text) {
+    final normalized = _normalizeWakeText(text);
+    if (normalized.isEmpty || normalized == 'unk') return false;
+    final tokens = normalized.split(' ');
+    if (tokens.length == 1) return _looksLikePin(tokens.first);
+    for (var i = 0; i < tokens.length - 1; i++) {
+      if (_looksLikeWakePrefix(tokens[i]) && _looksLikePin(tokens[i + 1])) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool _looksLikeWakePrefix(String token) {
+    return token == 'ei' ||
+        token == 'e' ||
+        token == 'hey' ||
+        token == 'oi' ||
+        token == 'ai';
+  }
+
+  bool _looksLikePin(String token) {
+    return token == 'pin' ||
+        token == 'pim' ||
+        token == 'pino' ||
+        token == 'bin' ||
+        token == 'bim';
+  }
+
+  String _normalizeWakeText(String text) {
+    return text
+        .toLowerCase()
+        .replaceAll(RegExp(r'[áàâãä]'), 'a')
+        .replaceAll(RegExp(r'[éèêë]'), 'e')
+        .replaceAll(RegExp(r'[íìîï]'), 'i')
+        .replaceAll(RegExp(r'[óòôõö]'), 'o')
+        .replaceAll(RegExp(r'[úùûü]'), 'u')
+        .replaceAll('ç', 'c')
+        .replaceAll(RegExp(r'[^a-z0-9 ]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
   }
 
   Future<List<String>> _grammarWithSavedPhrases() async {
@@ -239,6 +340,25 @@ class OfflineVoiceService {
     _recognizer = recognizer;
 
     _speechService ??= await _vosk.initSpeechService(recognizer);
+    await _useCommandGrammar();
+  }
+
+  Future<void> _useCommandGrammar() async {
+    if (_activeGrammar == _commandGrammarMode) return;
+    final recognizer = _recognizer;
+    if (recognizer == null) return;
+    await recognizer.setGrammar(await _grammarWithSavedPhrases());
+    await recognizer.reset();
+    _activeGrammar = _commandGrammarMode;
+  }
+
+  Future<void> _useWakeWordGrammar() async {
+    if (_activeGrammar == _wakeGrammarMode) return;
+    final recognizer = _recognizer;
+    if (recognizer == null) return;
+    await recognizer.setGrammar(wakeWordGrammar);
+    await recognizer.reset();
+    _activeGrammar = _wakeGrammarMode;
   }
 
   String _extractText(String raw, {bool partial = false}) {
@@ -274,8 +394,15 @@ class OfflineVoiceService {
     try {
       await _recognizer?.reset();
     } catch (_) {}
+    try {
+      await _recognizer?.dispose();
+    } catch (_) {}
+    try {
+      _model?.dispose();
+    } catch (_) {}
     _speechService = null;
     _recognizer = null;
     _model = null;
+    _activeGrammar = null;
   }
 }

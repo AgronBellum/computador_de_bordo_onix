@@ -14,9 +14,11 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.location.LocationManager
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -47,6 +49,16 @@ class MainActivity : FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
+                    "canDrawOverlays" -> result.success(canDrawOverlays())
+                    "requestOverlayPermission" -> requestOverlayPermission(result)
+                    "startAssistantBubble" -> {
+                        startAssistantBubble()
+                        result.success(true)
+                    }
+                    "stopAssistantBubble" -> {
+                        stopAssistantBubble()
+                        result.success(true)
+                                        }
                     "requestPermissions" -> requestBluetoothPermissions(result)
                     "requestVoicePermission" -> requestVoicePermission(result)
                     "bluetoothStatus" -> bluetoothStatus(result)
@@ -112,6 +124,37 @@ class MainActivity : FlutterActivity() {
         super.onDestroy()
     }
 
+    private fun canDrawOverlays(): Boolean {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this)
+    }
+
+    private fun requestOverlayPermission(result: MethodChannel.Result) {
+        if (canDrawOverlays()) {
+            result.success(true)
+            return
+        }
+        try {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName"),
+            )
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+            result.success(false)
+        } catch (error: Throwable) {
+            result.error("overlay_failed", error.message ?: "Falha ao abrir permissão de sobreposição", null)
+        }
+    }
+
+    private fun startAssistantBubble() {
+        if (!canDrawOverlays()) return
+        val intent = Intent(this, AssistantBubbleService::class.java)
+        startService(intent)
+    }
+
+    private fun stopAssistantBubble() {
+        stopService(Intent(this, AssistantBubbleService::class.java))
+    }
     private fun requestVoicePermission(result: MethodChannel.Result) {
         if (permissionResult != null) {
             result.error("permission_busy", "Solicitacao de permissao ja em andamento", null)

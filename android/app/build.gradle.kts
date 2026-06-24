@@ -40,5 +40,6 @@ flutter {
 }
 
 dependencies {
+    implementation("androidx.car.app:app:1.4.0")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 }
