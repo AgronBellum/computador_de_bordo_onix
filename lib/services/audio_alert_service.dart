@@ -12,6 +12,7 @@ class AudioAlertService {
   Completer<void>? _currentPlaybackDone;
   bool _enabled = true;
   bool _isDraining = false;
+  Future<void>? _drainFuture;
 
   void setEnabled(bool enabled) {
     _enabled = enabled;
@@ -27,6 +28,15 @@ class AudioAlertService {
       _playRandom(['renovado.mp3', 'recalculada.mp3']);
   Future<void> playSettingsSaved() => _play('sucesso.mp3');
   Future<void> playManualNumbers() => _play('numeros.mp3');
+  Future<void> playAssistantFallback() => _playSequence([
+        'assistente/estou_com.mp3',
+        'separados/0.mp3',
+        'assistente/porcento_de.mp3',
+        'assistente/combustivel.mp3',
+        'assistente/autonomia.mp3',
+        'separados/0.mp3',
+        'assistente/quilometros.mp3',
+      ], force: true, clearQueue: true);
   Future<void> playLowFuel() => _play('baixo.mp3');
   Future<void> playReserveFuel() => _play('reserva.mp3');
   Future<void> playFullFuel() => _play('agora_sim.mp3');
@@ -49,7 +59,7 @@ class AudioAlertService {
       'assistente/autonomia.mp3',
       ..._numberFiles(autonomyKm),
       'assistente/quilometros.mp3',
-    ], force: true);
+    ], force: true, clearQueue: true);
   }
 
   Future<void> playAssistantAutonomy(int autonomyKm) {
@@ -57,7 +67,7 @@ class AudioAlertService {
       'assistente/autonomia.mp3',
       ..._numberFiles(autonomyKm),
       'assistente/quilometros.mp3',
-    ], force: true);
+    ], force: true, clearQueue: true);
   }
 
   Future<void> playAssistantFuelOnly(int fuelPercent) {
@@ -66,7 +76,7 @@ class AudioAlertService {
       ..._numberFiles(fuelPercent),
       'assistente/porcento_de.mp3',
       'assistente/combustivel.mp3',
-    ], force: true);
+    ], force: true, clearQueue: true);
   }
 
   Future<void> playAssistantOilStatus({
@@ -77,14 +87,14 @@ class AudioAlertService {
       return _playSequence([
         'assistente/oleo.mp3',
         'assistente/proxima_troca.mp3',
-      ], force: true);
+      ], force: true, clearQueue: true);
     }
 
     if (due || remainingKm <= 0) {
       return _playSequence([
         'assistente/atencao.mp3',
         'assistente/troca_de_oleo.mp3',
-      ], force: true);
+      ], force: true, clearQueue: true);
     }
 
     return _playSequence([
@@ -93,7 +103,7 @@ class AudioAlertService {
       'assistente/quilometros.mp3',
       'assistente/proxima_troca.mp3',
       'assistente/oleo.mp3',
-    ], force: true);
+    ], force: true, clearQueue: true);
   }
 
   Future<void> playStartupGreeting() {
@@ -115,14 +125,23 @@ class AudioAlertService {
     return _play(fileNames[index]);
   }
 
-  Future<void> _playSequence(List<String> fileNames, {bool force = false}) {
-    if (!_enabled && !force) return Future.value();
+  Future<void> _playSequence(
+    List<String> fileNames, {
+    bool force = false,
+    bool clearQueue = false,
+  }) async {
+    if (!_enabled && !force) return;
+
+    if (clearQueue) {
+      _pending.clear();
+      _finishCurrentPlayback();
+      await _player.stop();
+    }
 
     for (final fileName in fileNames) {
       _pending.add(fileName);
     }
-    unawaited(_drainQueue());
-    return Future.value();
+    await _ensureDraining();
   }
 
   List<String> _numberFiles(int value) {
@@ -152,16 +171,22 @@ class AudioAlertService {
     ];
   }
 
-  Future<void> _play(String fileName) {
-    if (!_enabled) return Future.value();
+  Future<void> _play(String fileName) async {
+    if (!_enabled) return;
 
     _pending.add(fileName);
-    unawaited(_drainQueue());
-    return Future.value();
+    await _ensureDraining();
+  }
+
+  Future<void> _ensureDraining() {
+    if (_isDraining) return _drainFuture ?? Future.value();
+    final future = _drainQueue();
+    _drainFuture = future;
+    return future;
   }
 
   Future<void> _drainQueue() async {
-    if (_isDraining) return;
+    if (_isDraining) return _drainFuture ?? Future.value();
 
     _isDraining = true;
 
@@ -172,6 +197,7 @@ class AudioAlertService {
       }
     } finally {
       _isDraining = false;
+      _drainFuture = null;
     }
   }
 
@@ -186,6 +212,24 @@ class AudioAlertService {
 
     try {
       await _player.stop();
+      await _player.setAudioContext(
+        AudioContext(
+          android: AudioContextAndroid(
+            contentType: AndroidContentType.speech,
+            usageType: AndroidUsageType.assistant,
+            audioFocus: AndroidAudioFocus.gainTransientMayDuck,
+            isSpeakerphoneOn: false,
+            stayAwake: false,
+          ),
+          iOS: AudioContextIOS(
+            category: AVAudioSessionCategory.playback,
+            options: {
+              AVAudioSessionOptions.defaultToSpeaker,
+              AVAudioSessionOptions.mixWithOthers,
+            },
+          ),
+        ),
+      );
       await _player.setReleaseMode(ReleaseMode.stop);
       await _player.setPlayerMode(PlayerMode.mediaPlayer);
       await _player.setVolume(1);

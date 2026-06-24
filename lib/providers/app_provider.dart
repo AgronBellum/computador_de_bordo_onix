@@ -234,7 +234,7 @@ class AppProvider extends ChangeNotifier {
 
     final trip = _activeTrip;
     if (trip == null) {
-      await _audio.playManualNumbers();
+      await _audio.playAssistantFallback();
       return;
     }
 
