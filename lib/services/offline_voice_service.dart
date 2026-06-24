@@ -97,6 +97,9 @@ class OfflineVoiceService {
         if (text.isNotEmpty) {
           bestPartial = _pickBest(bestPartial, text);
           onPartial?.call(bestPartial);
+          if (_looksLikeCommand(bestPartial) && !done.isCompleted) {
+            done.complete();
+          }
         }
       });
       resultSub = service.onResult().listen((raw) {
@@ -114,7 +117,10 @@ class OfflineVoiceService {
       });
 
       await done.future.timeout(listenFor, onTimeout: () {});
-      await service.stop();
+      await service.stop().timeout(
+            const Duration(milliseconds: 900),
+            onTimeout: () => null,
+          );
       await partialSub.cancel();
       await resultSub.cancel();
 
@@ -163,6 +169,31 @@ class OfflineVoiceService {
       }
     } catch (_) {}
     return raw.trim();
+  }
+
+  bool _looksLikeCommand(String text) {
+    final normalized = _normalize(text);
+    if (normalized.isEmpty || normalized == 'unk') return false;
+    return commandGrammar
+        .where((command) => command != '[unk]')
+        .map(_normalize)
+        .any(
+          (command) => normalized == command || normalized.contains(command),
+        );
+  }
+
+  String _normalize(String text) {
+    return text
+        .toLowerCase()
+        .replaceAll(RegExp(r'[áàâãä]'), 'a')
+        .replaceAll(RegExp(r'[éèêë]'), 'e')
+        .replaceAll(RegExp(r'[íìîï]'), 'i')
+        .replaceAll(RegExp(r'[óòôõö]'), 'o')
+        .replaceAll(RegExp(r'[úùûü]'), 'u')
+        .replaceAll('ç', 'c')
+        .replaceAll(RegExp(r'[^a-z0-9 ]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
   }
 
   String _pickBest(String current, String candidate) {

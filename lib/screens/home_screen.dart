@@ -600,8 +600,13 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     Future<void> answer(String command) async {
+      voiceStatus.value = 'Respondendo...';
+      if (command.trim().isNotEmpty) {
+        recognizedPreview.value = 'Comando: ${command.trim()}';
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 350));
       await closeDialog();
-      await Future<void>.delayed(const Duration(milliseconds: 700));
+      await Future<void>.delayed(const Duration(milliseconds: 200));
       await provider.answerVoiceAssistantCommand(command);
     }
 
