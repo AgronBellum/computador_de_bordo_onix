@@ -600,29 +600,24 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     Future<void> answer(String command) async {
+      debugPrint('[VoiceAssistant] answer command="$command"');
       voiceStatus.value = 'Respondendo...';
       if (command.trim().isNotEmpty) {
         recognizedPreview.value = 'Comando: ${command.trim()}';
       }
-      await Future<void>.delayed(const Duration(milliseconds: 350));
-      await closeDialog();
-      await Future<void>.delayed(const Duration(milliseconds: 200));
-      await provider.answerVoiceAssistantCommand(command);
+      unawaited(Future<void>(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+        debugPrint('[VoiceAssistant] dispatch provider command="$command"');
+        await provider.answerVoiceAssistantCommand(command);
+      }));
+      await Future<void>.delayed(const Duration(milliseconds: 220));
     }
 
     try {
-      try {
-        controller = VideoPlayerController.asset('assets/videos/ouvindo.mp4');
-        _voiceVideoController = controller;
-        await controller.initialize();
-        await controller.setVolume(0);
-        await controller.setLooping(true);
-        await controller.play();
-      } catch (_) {
-        await controller?.dispose();
-        controller = null;
-        _voiceVideoController = null;
-      }
+      // O video_player/ExoPlayer falha em algumas centrais e pode derrubar o foco de audio da resposta.
+      // Mantemos o fallback visual leve ate termos um asset de video reencodado para essas plataformas.
+      controller = null;
+      _voiceVideoController = null;
 
       if (!mounted) return;
       final activeController = controller;
@@ -726,6 +721,8 @@ class _HomeScreenState extends State<HomeScreen> {
           }
         },
       );
+      debugPrint(
+          '[VoiceAssistant] offline text="${offlineResult.text}" partial="${offlineResult.partial}" error="${offlineResult.error ?? ''}"');
       if (offlineResult.hasText) {
         await answer(offlineResult.text);
         return;
@@ -1163,6 +1160,10 @@ class _HomeScreenState extends State<HomeScreen> {
           ? provider.tankCapacityLiters.toStringAsFixed(1).replaceAll('.', ',')
           : '',
     );
+    final voicePhraseControllers = {
+      for (final item in provider.voiceDestinationSettings)
+        item.id: TextEditingController(text: item.phrases),
+    };
     var soundsEnabled = provider.soundsEnabled;
     var mapVehicleIcon = provider.mapVehicleIcon;
 
@@ -1184,6 +1185,9 @@ class _HomeScreenState extends State<HomeScreen> {
           tripController.dispose();
           priceController.dispose();
           tankController.dispose();
+          for (final controller in voicePhraseControllers.values) {
+            controller.dispose();
+          }
           Navigator.pop(dialogContext);
         }
 
@@ -1350,6 +1354,41 @@ class _HomeScreenState extends State<HomeScreen> {
                                   });
                                 },
                               ),
+                              const SizedBox(height: 14),
+                              ExpansionTile(
+                                tilePadding: EdgeInsets.zero,
+                                childrenPadding: EdgeInsets.zero,
+                                leading: const Icon(Icons.record_voice_over),
+                                title: const Text('Frases do assistente'),
+                                subtitle: const Text(
+                                  'Separe variações por vírgula. Ex: crolo, crolofe.',
+                                ),
+                                children: [
+                                  for (final item
+                                      in provider.voiceDestinationSettings) ...[
+                                    TextField(
+                                      controller:
+                                          voicePhraseControllers[item.id],
+                                      minLines: 1,
+                                      maxLines: 3,
+                                      textCapitalization:
+                                          TextCapitalization.sentences,
+                                      style: TextStyle(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurface,
+                                      ),
+                                      decoration: InputDecoration(
+                                        labelText: item.name,
+                                        hintText:
+                                            'Ex: vamos para ${item.name.toLowerCase()}',
+                                        prefixIcon: const Icon(Icons.route),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 10),
+                                  ],
+                                ],
+                              ),
                               const SizedBox(height: 8),
                               SizedBox(
                                 width: double.infinity,
@@ -1428,6 +1467,10 @@ class _HomeScreenState extends State<HomeScreen> {
                             vehicleName: vehicleController.text,
                             mapVehicleIcon: mapVehicleIcon,
                           );
+                          await provider.saveVoiceDestinationAliases({
+                            for (final entry in voicePhraseControllers.entries)
+                              entry.key: entry.value.text,
+                          });
 
                           if (dialogContext.mounted) {
                             closeDialog();

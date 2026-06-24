@@ -3,6 +3,7 @@ import 'dart:collection';
 import 'dart:math';
 
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/foundation.dart';
 
 class AudioAlertService {
   final AudioPlayer _player = AudioPlayer();
@@ -28,15 +29,19 @@ class AudioAlertService {
       _playRandom(['renovado.mp3', 'recalculada.mp3']);
   Future<void> playSettingsSaved() => _play('sucesso.mp3');
   Future<void> playManualNumbers() => _play('numeros.mp3');
-  Future<void> playAssistantFallback() => _playSequence([
-        'assistente/estou_com.mp3',
-        'separados/0.mp3',
-        'assistente/porcento_de.mp3',
-        'assistente/combustivel.mp3',
-        'assistente/autonomia.mp3',
-        'separados/0.mp3',
-        'assistente/quilometros.mp3',
-      ], force: true, clearQueue: true);
+  Future<void> playAssistantFallback() {
+    debugPrint('[AssistantAudio] fallback');
+    return _playSequence([
+      'assistente/estou_com.mp3',
+      'separados/0.mp3',
+      'assistente/porcento_de.mp3',
+      'assistente/combustivel.mp3',
+      'assistente/autonomia.mp3',
+      'separados/0.mp3',
+      'assistente/quilometros.mp3',
+    ], force: true, clearQueue: true);
+  }
+
   Future<void> playLowFuel() => _play('baixo.mp3');
   Future<void> playReserveFuel() => _play('reserva.mp3');
   Future<void> playFullFuel() => _play('agora_sim.mp3');
@@ -47,10 +52,36 @@ class AudioAlertService {
   Future<void> playCityMode() => _play('cidade.mp3');
   Future<void> playTripMode() => _play('viagem.mp3');
 
+  Future<void> playAssistantFiles(List<String> fileNames) {
+    return _playSequence(fileNames, force: true, clearQueue: true);
+  }
+
+  Future<void> playAssistantLitersRemaining(double liters) {
+    final safe = liters.clamp(0.0, 999999.0);
+    final whole = safe.floor();
+    final decimal = ((safe - whole) * 10).round();
+    final numberFiles = decimal == 0
+        ? _numberFiles(whole)
+        : [
+            ..._numberFiles(whole),
+            'assistente/virgula.mp3',
+            ..._numberFiles(decimal),
+          ];
+
+    return _playSequence([
+      'assistente/estou_com.mp3',
+      ...numberFiles,
+      'assistente/litros_restantes.mp3',
+    ], force: true, clearQueue: true);
+  }
+
   Future<void> playAssistantFuelSummary({
     required int fuelPercent,
     required int autonomyKm,
   }) {
+    debugPrint(
+      '[AssistantAudio] fuel summary fuel=$fuelPercent autonomy=$autonomyKm',
+    );
     return _playSequence([
       'assistente/estou_com.mp3',
       ..._numberFiles(fuelPercent),
@@ -63,6 +94,7 @@ class AudioAlertService {
   }
 
   Future<void> playAssistantAutonomy(int autonomyKm) {
+    debugPrint('[AssistantAudio] autonomy=$autonomyKm');
     return _playSequence([
       'assistente/autonomia.mp3',
       ..._numberFiles(autonomyKm),
@@ -71,6 +103,7 @@ class AudioAlertService {
   }
 
   Future<void> playAssistantFuelOnly(int fuelPercent) {
+    debugPrint('[AssistantAudio] fuel only=$fuelPercent');
     return _playSequence([
       'assistente/estou_com.mp3',
       ..._numberFiles(fuelPercent),
@@ -83,6 +116,7 @@ class AudioAlertService {
     required int? remainingKm,
     required bool due,
   }) {
+    debugPrint('[AssistantAudio] oil remaining=$remainingKm due=$due');
     if (remainingKm == null) {
       return _playSequence([
         'assistente/oleo.mp3',
@@ -92,8 +126,7 @@ class AudioAlertService {
 
     if (due || remainingKm <= 0) {
       return _playSequence([
-        'assistente/atencao.mp3',
-        'assistente/troca_de_oleo.mp3',
+        'assistente/troca_de_oleo_atrasada.mp3',
       ], force: true, clearQueue: true);
     }
 
@@ -101,8 +134,7 @@ class AudioAlertService {
       'assistente/faltam.mp3',
       ..._numberFiles(remainingKm),
       'assistente/quilometros.mp3',
-      'assistente/proxima_troca.mp3',
-      'assistente/oleo.mp3',
+      'assistente/para_proxima_troca_de_oleo.mp3',
     ], force: true, clearQueue: true);
   }
 
@@ -138,6 +170,7 @@ class AudioAlertService {
       await _player.stop();
     }
 
+    debugPrint('[AssistantAudio] sequence files=${fileNames.join(', ')}');
     for (final fileName in fileNames) {
       _pending.add(fileName);
     }
@@ -180,16 +213,13 @@ class AudioAlertService {
 
   Future<void> _ensureDraining() {
     if (_isDraining) return _drainFuture ?? Future.value();
+    _isDraining = true;
     final future = _drainQueue();
     _drainFuture = future;
     return future;
   }
 
   Future<void> _drainQueue() async {
-    if (_isDraining) return _drainFuture ?? Future.value();
-
-    _isDraining = true;
-
     try {
       while (_pending.isNotEmpty) {
         final fileName = _pending.removeFirst();
@@ -211,20 +241,20 @@ class AudioAlertService {
     });
 
     try {
+      debugPrint('[AssistantAudio] play start audio/$fileName');
       await _player.stop();
       await _player.setAudioContext(
         AudioContext(
           android: AudioContextAndroid(
-            contentType: AndroidContentType.speech,
-            usageType: AndroidUsageType.assistant,
-            audioFocus: AndroidAudioFocus.gainTransientMayDuck,
+            contentType: AndroidContentType.music,
+            usageType: AndroidUsageType.media,
+            audioFocus: AndroidAudioFocus.gainTransient,
             isSpeakerphoneOn: false,
             stayAwake: false,
           ),
           iOS: AudioContextIOS(
             category: AVAudioSessionCategory.playback,
             options: {
-              AVAudioSessionOptions.defaultToSpeaker,
               AVAudioSessionOptions.mixWithOthers,
             },
           ),
@@ -237,9 +267,14 @@ class AudioAlertService {
 
       await done.future.timeout(
         const Duration(seconds: 90),
-        onTimeout: () {},
+        onTimeout: () {
+          debugPrint('[AssistantAudio] timeout audio/$fileName');
+        },
       );
-    } catch (_) {
+      debugPrint('[AssistantAudio] play complete audio/$fileName');
+    } catch (error, stackTrace) {
+      debugPrint('[AssistantAudio] play error audio/$fileName: $error');
+      debugPrint('$stackTrace');
       _finishCurrentPlayback();
     } finally {
       await completeSub.cancel();

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
@@ -9,10 +10,57 @@ import '../models/trip_model.dart';
 import '../services/audio_alert_service.dart';
 import '../services/database_service.dart';
 import '../services/gps_service.dart';
+import '../services/offline_map_service.dart';
+import '../services/offline_voice_service.dart';
+
+class _VoiceNavigationDestination {
+  const _VoiceNavigationDestination({
+    required this.id,
+    required this.name,
+    required this.kind,
+    required this.latitude,
+    required this.longitude,
+    required this.aliases,
+    required this.audioFiles,
+    this.alternateAudioFiles = const [],
+    this.arrivalAudioFile,
+  });
+
+  final String id;
+  final String name;
+  final String kind;
+  final double latitude;
+  final double longitude;
+  final List<String> aliases;
+  final List<String> audioFiles;
+  final List<String> alternateAudioFiles;
+  final String? arrivalAudioFile;
+
+  Offset get position => Offset(longitude, latitude);
+
+  List<String> responseFiles() {
+    if (alternateAudioFiles.isEmpty) return audioFiles;
+    final evenTick = DateTime.now().millisecondsSinceEpoch.isEven;
+    return evenTick ? audioFiles : alternateAudioFiles;
+  }
+}
+
+class VoiceAssistantDestinationSetting {
+  const VoiceAssistantDestinationSetting({
+    required this.id,
+    required this.name,
+    required this.phrases,
+  });
+
+  final String id;
+  final String name;
+  final String phrases;
+}
 
 class AppProvider extends ChangeNotifier {
   final DatabaseService _db = DatabaseService.instance;
   final GpsService _gps = GpsService();
+  final OfflineMapService _mapService = OfflineMapService();
   final AudioAlertService _audio = AudioAlertService();
 
   TripModel? _activeTrip;
@@ -57,12 +105,147 @@ class AppProvider extends ChangeNotifier {
   double? _oilNextChangeKm;
   bool _oilFilterChanged = false;
   String _oilType = '';
+  Map<String, List<String>> _voiceDestinationAliases = {};
   OfflineRoute? _activeNavigationRoute;
   MapDestination? _activeNavigationDestination;
 
   double? _lastRemainingFuel;
   double? _lastOdometer;
   double? _lastConsumption;
+
+  static const List<_VoiceNavigationDestination> _voiceDestinations = [
+    _VoiceNavigationDestination(
+      id: 'casa',
+      name: 'Casa',
+      kind: 'casa',
+      latitude: -31.74030165726514,
+      longitude: -52.31198595910366,
+      aliases: ['casa', 'minha casa', 'vamos para casa', 'ir para casa'],
+      audioFiles: ['assistente/caminho_pra_casa_ativo.mp3'],
+      alternateAudioFiles: ['assistente/indo_pra_casa.mp3'],
+      arrivalAudioFile: 'assistente/chegamos_em_casa.mp3',
+    ),
+    _VoiceNavigationDestination(
+      id: 'krolow',
+      name: 'Krolow',
+      kind: 'mercado',
+      latitude: -31.735146863157635,
+      longitude: -52.32586841707766,
+      aliases: [
+        'krolow',
+        'krolo',
+        'crolo',
+        'crolofe',
+        'krolof',
+        'crolof',
+        'vamos para krolow',
+        'vamos para crolo',
+        'vamos para crolofe',
+      ],
+      audioFiles: ['assistente/krolow.mp3'],
+    ),
+    _VoiceNavigationDestination(
+      id: 'posto_preferido',
+      name: 'Posto Preferido',
+      kind: 'posto',
+      latitude: -31.760179070721417,
+      longitude: -52.33998126419468,
+      aliases: ['posto preferido', 'posto favorito', 'meu posto'],
+      audioFiles: ['assistente/posto_preferido.mp3'],
+      arrivalAudioFile: 'assistente/chegamos_posto.mp3',
+    ),
+    _VoiceNavigationDestination(
+      id: 'central_pet',
+      name: 'Central Pet',
+      kind: 'pet',
+      latitude: -31.759185786220783,
+      longitude: -52.33921818422855,
+      aliases: ['central pet', 'pet shop', 'petshop'],
+      audioFiles: ['assistente/central_pet.mp3'],
+    ),
+    _VoiceNavigationDestination(
+      id: 'mercado_publico',
+      name: 'Mercado Publico',
+      kind: 'mercado',
+      latitude: -31.77062106540603,
+      longitude: -52.342570632694844,
+      aliases: ['mercado publico'],
+      audioFiles: ['assistente/mercado_publico.mp3'],
+    ),
+    _VoiceNavigationDestination(
+      id: 'guanabara',
+      name: 'Supermercado Guanabara',
+      kind: 'mercado',
+      latitude: -31.77134523894226,
+      longitude: -52.35027508043322,
+      aliases: ['guanabara', 'supermercado guanabara', 'mercado guanabara'],
+      audioFiles: ['assistente/guanabara.mp3'],
+    ),
+    _VoiceNavigationDestination(
+      id: 'shopping',
+      name: 'Shopping',
+      kind: 'shopping',
+      latitude: -31.760354329658902,
+      longitude: -52.31855242299705,
+      aliases: ['shopping', 'para o shopping'],
+      audioFiles: ['assistente/shopping.mp3'],
+    ),
+    _VoiceNavigationDestination(
+      id: 'baronesa',
+      name: 'Museu da Baronesa',
+      kind: 'museu',
+      latitude: -31.75536399209294,
+      longitude: -52.32033865524371,
+      aliases: ['baronesa', 'museu da baronesa', 'museu baronesa'],
+      audioFiles: ['assistente/baronesa.mp3'],
+    ),
+    _VoiceNavigationDestination(
+      id: 'camboata',
+      name: 'Camboata',
+      kind: 'campo',
+      latitude: -31.41209878419524,
+      longitude: -52.414614076753644,
+      aliases: ['camboata', 'seu gilson', 'gilson', 'mato'],
+      audioFiles: ['assistente/rota_camboata.mp3'],
+    ),
+    _VoiceNavigationDestination(
+      id: 'sao_lourenco',
+      name: 'Sao Lourenco do Sul',
+      kind: 'cidade',
+      latitude: -31.368975743665874,
+      longitude: -51.98216421884769,
+      aliases: [
+        'sao lourenco do sul',
+        'sao lourenco',
+        'sao lorenço',
+        'sao lorenco',
+        'sao lourenço',
+        'sao lourenso',
+        'sao lourenço do sul',
+        'vamos para sao lourenco',
+        'vamos para sao lourenco do sul',
+      ],
+      audioFiles: ['assistente/sao_lourenco.mp3'],
+    ),
+    _VoiceNavigationDestination(
+      id: 'santa_vitoria',
+      name: 'Santa Vitoria do Palmar',
+      kind: 'cidade',
+      latitude: -33.523557630090096,
+      longitude: -53.37638548894094,
+      aliases: ['santa vitoria do palmar', 'santa vitoria'],
+      audioFiles: ['assistente/santa_vitoria.mp3'],
+    ),
+    _VoiceNavigationDestination(
+      id: 'pet_vida',
+      name: 'PetVida',
+      kind: 'veterinario',
+      latitude: -31.75588508816931,
+      longitude: -52.33289401883183,
+      aliases: ['veterinario do chico', 'pet vida', 'petvida', 'veterinario'],
+      audioFiles: ['assistente/pet_vida.mp3'],
+    ),
+  ];
 
   TripModel? get activeTrip => _activeTrip;
   List<TripModel> get trips => _trips;
@@ -91,6 +274,16 @@ class AppProvider extends ChangeNotifier {
   double? get oilNextChangeKm => _oilNextChangeKm;
   bool get oilFilterChanged => _oilFilterChanged;
   String get oilType => _oilType;
+  List<VoiceAssistantDestinationSetting> get voiceDestinationSettings =>
+      _voiceDestinations
+          .map(
+            (destination) => VoiceAssistantDestinationSetting(
+              id: destination.id,
+              name: destination.name,
+              phrases: _phrasesToText(_voiceAliasesFor(destination)),
+            ),
+          )
+          .toList(growable: false);
   OfflineRoute? get activeNavigationRoute => _activeNavigationRoute;
   MapDestination? get activeNavigationDestination =>
       _activeNavigationDestination;
@@ -173,6 +366,9 @@ class AppProvider extends ChangeNotifier {
     _oilNextChangeKm = prefs.getDouble('oil_next_change_km');
     _oilFilterChanged = prefs.getBool('oil_filter_changed') ?? false;
     _oilType = prefs.getString('oil_type') ?? '';
+    _voiceDestinationAliases = _decodeVoiceAliases(
+      prefs.getString('voice_destination_aliases'),
+    );
   }
 
   Future<void> saveOilChange({
@@ -193,6 +389,66 @@ class AppProvider extends ChangeNotifier {
     await prefs.setString('oil_type', _oilType);
 
     _statusMessage = 'Troca de óleo salva';
+    notifyListeners();
+  }
+
+  Map<String, List<String>> _decodeVoiceAliases(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) return {};
+      final result = <String, List<String>>{};
+      for (final entry in decoded.entries) {
+        final value = entry.value;
+        if (value is List) {
+          final phrases = value
+              .map((item) => item.toString().trim())
+              .where((item) => item.isNotEmpty)
+              .toSet()
+              .toList(growable: false);
+          if (phrases.isNotEmpty) result[entry.key] = phrases;
+        }
+      }
+      return result;
+    } catch (_) {
+      return {};
+    }
+  }
+
+  List<String> _textToPhrases(String text) {
+    return text
+        .split(RegExp(r'[,;\n]'))
+        .map((phrase) => phrase.trim())
+        .where((phrase) => phrase.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+  }
+
+  String _phrasesToText(List<String> phrases) => phrases.join(', ');
+
+  List<String> _voiceAliasesFor(_VoiceNavigationDestination destination) {
+    final custom = _voiceDestinationAliases[destination.id] ?? const <String>[];
+    return {...destination.aliases, ...custom}.toList(growable: false);
+  }
+
+  Future<void> saveVoiceDestinationAliases(
+    Map<String, String> destinationPhrases,
+  ) async {
+    final next = <String, List<String>>{};
+    for (final destination in _voiceDestinations) {
+      final phrases = _textToPhrases(destinationPhrases[destination.id] ?? '');
+      final defaults = destination.aliases.map(_normalizeVoiceCommand).toSet();
+      final custom = phrases
+          .where((phrase) => !defaults.contains(_normalizeVoiceCommand(phrase)))
+          .toList(growable: false);
+      if (custom.isNotEmpty) next[destination.id] = custom;
+    }
+
+    _voiceDestinationAliases = next;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('voice_destination_aliases', jsonEncode(next));
+    await OfflineVoiceService.instance.reloadGrammar();
+    _statusMessage = 'Frases do assistente salvas';
     notifyListeners();
   }
 
@@ -232,6 +488,9 @@ class AppProvider extends ChangeNotifier {
   Future<void> answerVoiceAssistantCommand(String command) async {
     final normalized = _normalizeVoiceCommand(command);
 
+    final routed = await _tryActivateVoiceNavigation(normalized);
+    if (routed) return;
+
     final trip = _activeTrip;
     if (trip == null) {
       await _audio.playAssistantFallback();
@@ -240,9 +499,14 @@ class AppProvider extends ChangeNotifier {
 
     final fuelPercent = (fuelPercentage * 100).round().clamp(0, 100);
     final autonomyKm = trip.estimatedRange.round().clamp(0, 999999);
+    final remainingLiters = trip.remainingFuel.clamp(0.0, 999999.0);
     final intent = _detectVoiceIntent(normalized);
+    debugPrint('[VoiceAssistant] provider intent="$intent" trip=true');
 
     switch (intent) {
+      case 'liters':
+        await _audio.playAssistantLitersRemaining(remainingLiters);
+        return;
       case 'fuel':
         await _audio.playAssistantFuelOnly(fuelPercent);
         return;
@@ -265,6 +529,101 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
+  Future<bool> _tryActivateVoiceNavigation(String normalized) async {
+    final destination = _detectVoiceDestination(normalized);
+    if (destination == null) return false;
+
+    _statusMessage = 'Calculando rota para ${destination.name}...';
+    notifyListeners();
+
+    final origin = await _currentNavigationOrigin();
+    if (origin == null) {
+      _statusMessage = 'Aguardando GPS para calcular rota';
+      notifyListeners();
+      return true;
+    }
+
+    try {
+      final map = await _mapService.loadCurrentMap();
+      final route = OfflineRouteCalculator(map).calculate(
+        origin,
+        destination.position,
+      );
+
+      if (route == null) {
+        _statusMessage = 'Rota indisponivel para ${destination.name}';
+        notifyListeners();
+        return true;
+      }
+
+      _activeNavigationRoute = route;
+      _activeNavigationDestination = MapDestination(
+        name: destination.name,
+        position: destination.position,
+        kind: destination.kind,
+      );
+      _statusMessage = 'Rota para ${destination.name} ativa';
+      notifyListeners();
+      await _audio.playAssistantFiles(destination.responseFiles());
+      return true;
+    } catch (error) {
+      debugPrint('[VoiceAssistant] route error for ${destination.id}: $error');
+      _statusMessage =
+          'Nao foi possivel calcular rota para ${destination.name}';
+      notifyListeners();
+      return true;
+    }
+  }
+
+  Future<Offset?> _currentNavigationOrigin() async {
+    final lat = _lastGpsLatitude;
+    final lon = _lastGpsLongitude;
+    if (lat != null && lon != null) return Offset(lon, lat);
+
+    final allowed = await _gps.requestPermission();
+    if (!allowed) return null;
+
+    final position = await _gps.getCurrentPosition();
+    if (position == null) return null;
+
+    _lastGpsLatitude = position.latitude;
+    _lastGpsLongitude = position.longitude;
+    _lastGpsHeading = _headingForPosition(position);
+    _lastGpsPositionAt = DateTime.now();
+    return Offset(position.longitude, position.latitude);
+  }
+
+  _VoiceNavigationDestination? _detectVoiceDestination(String normalized) {
+    if (normalized.isEmpty) return null;
+
+    _VoiceNavigationDestination? best;
+    var bestScore = 0;
+
+    for (final destination in _voiceDestinations) {
+      var score = 0;
+      for (final alias in _voiceAliasesFor(destination)) {
+        final normalizedAlias = _normalizeVoiceCommand(alias);
+        if (normalized == normalizedAlias) {
+          score += 100;
+        } else if (normalized.contains(normalizedAlias)) {
+          score += 60 + normalizedAlias.length;
+        } else {
+          final aliasWords = normalizedAlias.split(' ');
+          for (final word in aliasWords) {
+            if (word.length >= 3 && normalized.contains(word)) score += 6;
+          }
+        }
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        best = destination;
+      }
+    }
+
+    return bestScore >= 12 ? best : null;
+  }
+
   String _normalizeVoiceCommand(String command) {
     final normalized = command
         .toLowerCase()
@@ -279,16 +638,21 @@ class AppProvider extends ChangeNotifier {
         .trim();
 
     return normalized
-        .replaceAll('combustivel', 'combustivel')
         .replaceAll('conbustivel', 'combustivel')
         .replaceAll('com bustivel', 'combustivel')
         .replaceAll('gazo lina', 'gasolina')
-        .replaceAll('autonomia', 'autonomia')
         .replaceAll('auto nomia', 'autonomia')
         .replaceAll('quilometros', 'quilometros')
         .replaceAll('quilometro', 'quilometro')
-        .replaceAll('oleo', 'oleo')
-        .replaceAll('olio', 'oleo');
+        .replaceAll('olio', 'oleo')
+        .replaceAll('crolofe', 'crolofe')
+        .replaceAll('crolo fi', 'crolofe')
+        .replaceAll('crolo f', 'crolofe')
+        .replaceAll('camboata', 'camboata')
+        .replaceAll('sao lorenco', 'sao lourenco')
+        .replaceAll('sao lourenso', 'sao lourenco')
+        .replaceAll('sao lorenzo', 'sao lourenco')
+        .replaceAll('sao lourenco do sul', 'sao lourenco do sul');
   }
 
   String _detectVoiceIntent(String normalized) {

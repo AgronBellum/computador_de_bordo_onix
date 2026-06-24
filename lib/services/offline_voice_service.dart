@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vosk_flutter/vosk_flutter.dart';
 
 class OfflineVoiceRecognitionResult {
@@ -41,6 +42,10 @@ class OfflineVoiceService {
     'nivel de combustivel',
     'quanto combustivel',
     'como estamos de combustivel',
+    'quantos litros restantes',
+    'litros restantes',
+    'quantos litros ainda temos',
+    'temos quantos litros',
     'autonomia',
     'alcance',
     'quantos quilometros',
@@ -52,6 +57,53 @@ class OfflineVoiceService {
     'troca de oleo',
     'proxima troca',
     'filtro de oleo',
+    'vamos para casa',
+    'ir para casa',
+    'casa',
+    'vamos para posto preferido',
+    'posto preferido',
+    'posto favorito',
+    'vamos para krolow',
+    'vamos para crolo',
+    'vamos para crolofe',
+    'krolow',
+    'krolo',
+    'crolo',
+    'crolofe',
+    'crolof',
+    'krolof',
+    'vamos para guanabara',
+    'guanabara',
+    'supermercado guanabara',
+    'vamos para central pet',
+    'central pet',
+    'pet shop',
+    'vamos para shopping',
+    'shopping',
+    'vamos para baronesa',
+    'museu da baronesa',
+    'baronesa',
+    'vamos para mercado publico',
+    'mercado publico',
+    'vamos para camboata',
+    'camboata',
+    'vamos para seu gilson',
+    'seu gilson',
+    'gilson',
+    'vamos para sao lourenco do sul',
+    'vamos para sao lourenco',
+    'sao lourenco do sul',
+    'sao lourenco',
+    'sao lorenco',
+    'sao lourenso',
+    'sao lorenzo',
+    'vamos para santa vitoria do palmar',
+    'santa vitoria do palmar',
+    'santa vitoria',
+    'vamos para veterinario do chico',
+    'veterinario do chico',
+    'pet vida',
+    'petvida',
     '[unk]',
   ];
 
@@ -86,6 +138,8 @@ class OfflineVoiceService {
         );
       }
 
+      await _recognizer?.reset();
+
       var bestPartial = '';
       var bestResult = '';
       final done = Completer<void>();
@@ -97,9 +151,6 @@ class OfflineVoiceService {
         if (text.isNotEmpty) {
           bestPartial = _pickBest(bestPartial, text);
           onPartial?.call(bestPartial);
-          if (_looksLikeCommand(bestPartial) && !done.isCompleted) {
-            done.complete();
-          }
         }
       });
       resultSub = service.onResult().listen((raw) {
@@ -121,6 +172,7 @@ class OfflineVoiceService {
             const Duration(milliseconds: 900),
             onTimeout: () => null,
           );
+      await _recognizer?.reset();
       await partialSub.cancel();
       await resultSub.cancel();
 
@@ -134,12 +186,41 @@ class OfflineVoiceService {
       try {
         await _speechService?.stop();
       } catch (_) {}
+      try {
+        await _recognizer?.reset();
+      } catch (_) {}
       return OfflineVoiceRecognitionResult(
         text: '',
         engine: 'vosk',
         error: error.toString(),
       );
     }
+  }
+
+  Future<List<String>> _grammarWithSavedPhrases() async {
+    final phrases = <String>{...commandGrammar};
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString('voice_destination_aliases');
+      if (raw != null && raw.trim().isNotEmpty) {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map<String, dynamic>) {
+          for (final value in decoded.values) {
+            if (value is List) {
+              for (final phrase in value) {
+                final text = phrase.toString().trim().toLowerCase();
+                if (text.isNotEmpty) phrases.add(text);
+              }
+            }
+          }
+        }
+      }
+    } catch (_) {}
+    return phrases.toList(growable: false);
+  }
+
+  Future<void> reloadGrammar() async {
+    await dispose();
   }
 
   Future<void> _initialize() async {
@@ -153,7 +234,7 @@ class OfflineVoiceService {
         await _vosk.createRecognizer(
           model: model,
           sampleRate: _sampleRate,
-          grammar: commandGrammar,
+          grammar: await _grammarWithSavedPhrases(),
         );
     _recognizer = recognizer;
 
@@ -169,31 +250,6 @@ class OfflineVoiceService {
       }
     } catch (_) {}
     return raw.trim();
-  }
-
-  bool _looksLikeCommand(String text) {
-    final normalized = _normalize(text);
-    if (normalized.isEmpty || normalized == 'unk') return false;
-    return commandGrammar
-        .where((command) => command != '[unk]')
-        .map(_normalize)
-        .any(
-          (command) => normalized == command || normalized.contains(command),
-        );
-  }
-
-  String _normalize(String text) {
-    return text
-        .toLowerCase()
-        .replaceAll(RegExp(r'[áàâãä]'), 'a')
-        .replaceAll(RegExp(r'[éèêë]'), 'e')
-        .replaceAll(RegExp(r'[íìîï]'), 'i')
-        .replaceAll(RegExp(r'[óòôõö]'), 'o')
-        .replaceAll(RegExp(r'[úùûü]'), 'u')
-        .replaceAll('ç', 'c')
-        .replaceAll(RegExp(r'[^a-z0-9 ]'), ' ')
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
   }
 
   String _pickBest(String current, String candidate) {
