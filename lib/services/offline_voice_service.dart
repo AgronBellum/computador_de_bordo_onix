@@ -38,32 +38,64 @@ class OfflineVoiceService {
 
   static const String _commandGrammarMode = 'command';
   static const String _wakeGrammarMode = 'wake';
+  static const String _ambientGrammarMode = 'ambient';
 
   static const List<String> wakeWordGrammar = [
     'ei pin',
     'e pin',
-    'hey pin',
-    'oi pin',
-    'ai pin',
     'ei pim',
     'e pim',
-    'hey pim',
-    'oi pim',
-    'ai pim',
     'ei pino',
     'e pino',
-    'oi pino',
-    'pin',
-    'pim',
     '[unk]',
   ];
 
+  static const List<String> quickCommandGrammar = [
+    'aumentar volume',
+    'aumenta volume',
+    'volume mais',
+    'mais volume',
+    'diminuir volume',
+    'diminui volume',
+    'volume menos',
+    'menos volume',
+    'baixar volume',
+    'baixa volume',
+    'volume maximo',
+    'volume máximo',
+    'mutar',
+    'mudo',
+    'desmutar',
+    'tirar do mudo',
+    'proxima musica',
+    'próxima música',
+    'proxima faixa',
+    'próxima faixa',
+    'passar musica',
+    'passar música',
+    'musica anterior',
+    'música anterior',
+    'faixa anterior',
+    'voltar musica',
+    'voltar música',
+    'pausar musica',
+    'pausar música',
+    'pausar',
+    'continuar musica',
+    'continuar música',
+    'tocar musica',
+    'tocar música',
+    'play pause',
+  ];
+
+  static const List<String> ambientGrammar = [
+    ...wakeWordGrammar,
+    ...quickCommandGrammar,
+    '[unk]',
+  ];
   static const List<String> commandGrammar = [
     'ei pin',
     'e pin',
-    'hey pin',
-    'oi pin',
-    'pin',
     'combustivel',
     'gasolina',
     'tanque',
@@ -157,6 +189,8 @@ class OfflineVoiceService {
     void Function(String partial)? onPartial,
     bool useCommandGrammar = true,
   }) async {
+    StreamSubscription<String>? partialSub;
+    StreamSubscription<String>? resultSub;
     try {
       onStatus?.call('Carregando voz offline...');
       await warmUp();
@@ -175,8 +209,6 @@ class OfflineVoiceService {
       var bestPartial = '';
       var bestResult = '';
       final done = Completer<void>();
-      late final StreamSubscription<String> partialSub;
-      late final StreamSubscription<String> resultSub;
 
       partialSub = service.onPartial().listen((raw) {
         final text = _extractText(raw, partial: true);
@@ -189,7 +221,6 @@ class OfflineVoiceService {
         final text = _extractText(raw);
         if (text.isNotEmpty) {
           bestResult = _pickBest(bestResult, text);
-          onPartial?.call(bestResult);
           if (!done.isCompleted) done.complete();
         }
       });
@@ -216,10 +247,8 @@ class OfflineVoiceService {
         onPartial?.call(bestResult);
       }
       await _recognizer?.reset();
-      await partialSub.cancel();
-      await resultSub.cancel();
 
-      final text = _pickBest(bestResult, bestPartial);
+      final text = bestResult.isNotEmpty ? bestResult : bestPartial;
       return OfflineVoiceRecognitionResult(
         text: text,
         partial: bestPartial,
@@ -237,7 +266,73 @@ class OfflineVoiceService {
         engine: 'vosk',
         error: error.toString(),
       );
+    } finally {
+      await partialSub?.cancel();
+      await resultSub?.cancel();
     }
+  }
+
+  Future<OfflineVoiceRecognitionResult> listenForAmbientCommand({
+    Duration listenFor = const Duration(seconds: 4),
+    void Function(String status)? onStatus,
+  }) async {
+    await warmUp();
+    await _useAmbientGrammar();
+    return listenForCommand(
+      listenFor: listenFor,
+      onStatus: onStatus,
+      useCommandGrammar: false,
+    );
+  }
+
+  String? detectQuickCommand(
+    String text, {
+    required bool volumeEnabled,
+    required bool mediaEnabled,
+  }) {
+    final normalized = _normalizeWakeText(text);
+    if (normalized.isEmpty || normalized == 'unk') return null;
+
+    if (volumeEnabled) {
+      if (normalized.contains('aument') ||
+          normalized.contains('mais volume') ||
+          normalized.contains('volume mais')) {
+        return 'volume_up';
+      }
+      if (normalized.contains('diminu') ||
+          normalized.contains('baixar volume') ||
+          normalized.contains('baixa volume') ||
+          normalized.contains('menos volume') ||
+          normalized.contains('volume menos')) {
+        return 'volume_down';
+      }
+      if (normalized.contains('volume maximo')) return 'volume_max';
+      if (normalized.contains('mutar') || normalized == 'mudo') return 'mute';
+      if (normalized.contains('desmutar') ||
+          normalized.contains('tirar do mudo')) {
+        return 'unmute';
+      }
+    }
+
+    if (mediaEnabled) {
+      if (normalized.contains('proxima') ||
+          normalized.contains('passar musica') ||
+          normalized.contains('passar faixa')) {
+        return 'media_next';
+      }
+      if (normalized.contains('anterior') ||
+          normalized.contains('voltar musica')) {
+        return 'media_previous';
+      }
+      if (normalized.contains('pausar') ||
+          normalized.contains('continuar') ||
+          normalized.contains('tocar musica') ||
+          normalized.contains('play pause')) {
+        return 'media_play_pause';
+      }
+    }
+
+    return null;
   }
 
   Future<bool> listenForWakeWord({
@@ -255,11 +350,13 @@ class OfflineVoiceService {
         _looksLikeWakeWord(result.partial);
   }
 
+  bool detectWakeWord(String text) => _looksLikeWakeWord(text);
+
   bool _looksLikeWakeWord(String text) {
     final normalized = _normalizeWakeText(text);
     if (normalized.isEmpty || normalized == 'unk') return false;
     final tokens = normalized.split(' ');
-    if (tokens.length == 1) return _looksLikePin(tokens.first);
+    if (tokens.length < 2) return false;
     for (var i = 0; i < tokens.length - 1; i++) {
       if (_looksLikeWakePrefix(tokens[i]) && _looksLikePin(tokens[i + 1])) {
         return true;
@@ -269,11 +366,7 @@ class OfflineVoiceService {
   }
 
   bool _looksLikeWakePrefix(String token) {
-    return token == 'ei' ||
-        token == 'e' ||
-        token == 'hey' ||
-        token == 'oi' ||
-        token == 'ai';
+    return token == 'ei' || token == 'e';
   }
 
   bool _looksLikePin(String token) {
@@ -361,6 +454,15 @@ class OfflineVoiceService {
     _activeGrammar = _wakeGrammarMode;
   }
 
+  Future<void> _useAmbientGrammar() async {
+    if (_activeGrammar == _ambientGrammarMode) return;
+    final recognizer = _recognizer;
+    if (recognizer == null) return;
+    await recognizer.setGrammar(ambientGrammar);
+    await recognizer.reset();
+    _activeGrammar = _ambientGrammarMode;
+  }
+
   String _extractText(String raw, {bool partial = false}) {
     try {
       final decoded = jsonDecode(raw);
@@ -400,6 +502,7 @@ class OfflineVoiceService {
     try {
       _model?.dispose();
     } catch (_) {}
+    _initializing = null;
     _speechService = null;
     _recognizer = null;
     _model = null;

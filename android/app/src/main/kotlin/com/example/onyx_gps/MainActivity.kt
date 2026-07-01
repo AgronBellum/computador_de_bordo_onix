@@ -27,6 +27,8 @@ import java.io.OutputStream
 import java.util.Locale
 import java.util.UUID
 import kotlin.concurrent.thread
+import android.view.KeyEvent
+import android.media.AudioManager
 
 class MainActivity : FlutterActivity() {
     private val channelName = "onyx_gps/obd_bluetooth"
@@ -58,7 +60,15 @@ class MainActivity : FlutterActivity() {
                     "stopAssistantBubble" -> {
                         stopAssistantBubble()
                         result.success(true)
-                                        }
+                    }
+                    "performMediaCommand" -> {
+                        val command = call.argument<String>("command")
+                        if (command.isNullOrBlank()) {
+                            result.error("missing_command", "Comando de mídia ausente", null)
+                        } else {
+                            performMediaCommand(command, result)
+                        }
+                    }
                     "requestPermissions" -> requestBluetoothPermissions(result)
                     "requestVoicePermission" -> requestVoicePermission(result)
                     "bluetoothStatus" -> bluetoothStatus(result)
@@ -124,6 +134,68 @@ class MainActivity : FlutterActivity() {
         super.onDestroy()
     }
 
+
+    private fun performMediaCommand(command: String, result: MethodChannel.Result) {
+        val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        try {
+            when (command) {
+                "volume_up" -> audio.adjustStreamVolume(
+                    AudioManager.STREAM_MUSIC,
+                    AudioManager.ADJUST_RAISE,
+                    AudioManager.FLAG_SHOW_UI,
+                )
+                "volume_down" -> audio.adjustStreamVolume(
+                    AudioManager.STREAM_MUSIC,
+                    AudioManager.ADJUST_LOWER,
+                    AudioManager.FLAG_SHOW_UI,
+                )
+                "volume_max" -> audio.setStreamVolume(
+                    AudioManager.STREAM_MUSIC,
+                    audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC),
+                    AudioManager.FLAG_SHOW_UI,
+                )
+                "mute" -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        audio.adjustStreamVolume(
+                            AudioManager.STREAM_MUSIC,
+                            AudioManager.ADJUST_MUTE,
+                            AudioManager.FLAG_SHOW_UI,
+                        )
+                    } else {
+                        @Suppress("DEPRECATION")
+                        audio.setStreamMute(AudioManager.STREAM_MUSIC, true)
+                    }
+                }
+                "unmute" -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        audio.adjustStreamVolume(
+                            AudioManager.STREAM_MUSIC,
+                            AudioManager.ADJUST_UNMUTE,
+                            AudioManager.FLAG_SHOW_UI,
+                        )
+                    } else {
+                        @Suppress("DEPRECATION")
+                        audio.setStreamMute(AudioManager.STREAM_MUSIC, false)
+                    }
+                }
+                "media_next" -> dispatchMediaKey(audio, KeyEvent.KEYCODE_MEDIA_NEXT)
+                "media_previous" -> dispatchMediaKey(audio, KeyEvent.KEYCODE_MEDIA_PREVIOUS)
+                "media_play_pause" -> dispatchMediaKey(audio, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
+                else -> {
+                    result.error("unknown_media_command", "Comando de mídia desconhecido", command)
+                    return
+                }
+            }
+            result.success(true)
+        } catch (error: Throwable) {
+            result.error("media_command_failed", error.message ?: "Falha ao executar comando de mídia", null)
+        }
+    }
+
+    private fun dispatchMediaKey(audio: AudioManager, keyCode: Int) {
+        audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, keyCode))
+        audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, keyCode))
+    }
     private fun canDrawOverlays(): Boolean {
         return Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this)
     }

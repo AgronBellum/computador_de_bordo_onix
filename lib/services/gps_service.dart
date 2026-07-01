@@ -101,6 +101,8 @@ class GpsService {
         );
       }
 
+      var canBecomeBaseline = true;
+
       if (_lastPosition != null) {
         final distance = Geolocator.distanceBetween(
           _lastPosition!.latitude,
@@ -125,6 +127,7 @@ class GpsService {
             distance,
           );
         } else if (distance > 1000.0) {
+          canBecomeBaseline = false;
           onPositionIgnored?.call(
             position,
             'salto GPS (${distance.toStringAsFixed(0)}m)',
@@ -132,7 +135,9 @@ class GpsService {
         }
       }
 
-      _lastPosition = position;
+      if (canBecomeBaseline) {
+        _lastPosition = position;
+      }
     }
 
     _positionStream = Geolocator.getPositionStream(

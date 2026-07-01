@@ -69,15 +69,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _lifecycleState = state;
     super.didChangeAppLifecycleState(state);
-    if (!mounted) return;
+    if (!mounted || !context.mounted) return;
     final provider = context.read<AppProvider>();
     _syncAssistantAmbient(provider);
   }
 
   void _syncAssistantAmbient(AppProvider provider) {
-    if (_lastSyncedWakeWordEnabled != provider.wakeWordEnabled) {
-      _lastSyncedWakeWordEnabled = provider.wakeWordEnabled;
-      if (provider.wakeWordEnabled) {
+    final ambientEnabled = _ambientVoiceEnabled(provider);
+    if (_lastSyncedWakeWordEnabled != ambientEnabled) {
+      _lastSyncedWakeWordEnabled = ambientEnabled;
+      if (ambientEnabled) {
         _startWakeWordLoop(provider);
         _startWakeWordWatchdog();
       } else {
@@ -92,8 +93,35 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       unawaited(_setAssistantBubble(bubbleVisible));
     }
 
-    if (provider.wakeWordEnabled && !_wakeWordLoopActive) {
+    if (_ambientVoiceEnabled(provider) && !_wakeWordLoopActive) {
       _startWakeWordLoop(provider);
+    }
+  }
+
+  bool _ambientVoiceEnabled(AppProvider provider) {
+    return provider.wakeWordEnabled || provider.quickVoiceCommandsEnabled;
+  }
+
+  Future<bool> _handleQuickVoiceCommand(
+    AppProvider provider,
+    String heard,
+  ) async {
+    if (!provider.quickVoiceCommandsEnabled) return false;
+    final command = OfflineVoiceService.instance.detectQuickCommand(
+      heard,
+      volumeEnabled: provider.voiceVolumeControlEnabled,
+      mediaEnabled: provider.voiceMediaControlEnabled,
+    );
+    if (command == null) return false;
+    try {
+      await _nativeChannel.invokeMethod('performMediaCommand', {
+        'command': command,
+      });
+      debugPrint('[VoiceAssistant] quick command="$command" heard="$heard"');
+      return true;
+    } catch (error) {
+      debugPrint('[VoiceAssistant] quick command error: $error');
+      return true;
     }
   }
 
@@ -106,7 +134,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _wakeWordWatchdogTimer ??= Timer.periodic(const Duration(seconds: 20), (_) {
       if (!mounted) return;
       final provider = context.read<AppProvider>();
-      if (!provider.wakeWordEnabled) {
+      if (!_ambientVoiceEnabled(provider)) {
         _stopWakeWordWatchdog();
         return;
       }
@@ -128,19 +156,31 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     unawaited(Future<void>(() async {
       try {
-        while (mounted && provider.wakeWordEnabled && !_wakeWordStopRequested) {
+        while (mounted &&
+            _ambientVoiceEnabled(provider) &&
+            !_wakeWordStopRequested) {
           if (_voiceAssistantBusy) {
             await Future<void>.delayed(const Duration(milliseconds: 500));
             continue;
           }
 
-          final woke = await OfflineVoiceService.instance.listenForWakeWord(
+          final result =
+              await OfflineVoiceService.instance.listenForAmbientCommand(
             listenFor: const Duration(seconds: 4),
           );
-          if (!mounted || !provider.wakeWordEnabled || _wakeWordStopRequested) {
+          if (!mounted ||
+              !_ambientVoiceEnabled(provider) ||
+              _wakeWordStopRequested) {
             break;
           }
-          if (woke) {
+          final heard = result.text.trim().isNotEmpty
+              ? result.text.trim()
+              : result.partial.trim();
+          final quickHandled = await _handleQuickVoiceCommand(provider, heard);
+          if (quickHandled) {
+            await Future<void>.delayed(const Duration(milliseconds: 450));
+          } else if (provider.wakeWordEnabled &&
+              OfflineVoiceService.instance.detectWakeWord(heard)) {
             await _handleWakeWordDetected(provider);
             await Future<void>.delayed(const Duration(milliseconds: 900));
           } else {
@@ -152,9 +192,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         await OfflineVoiceService.instance.dispose();
       } finally {
         _wakeWordLoopActive = false;
-        if (mounted && provider.wakeWordEnabled && !_wakeWordStopRequested) {
+        if (mounted &&
+            context.mounted &&
+            _ambientVoiceEnabled(provider) &&
+            !_wakeWordStopRequested) {
           await Future<void>.delayed(const Duration(seconds: 1));
-          _startWakeWordLoop(provider);
+          if (mounted && context.mounted) {
+            _startWakeWordLoop(provider);
+          }
         }
       }
     }));
@@ -188,7 +233,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     } catch (error) {
       debugPrint('[VoiceAssistant] background answer error: $error');
     } finally {
-      _voiceAssistantBusy = false;
+      if (mounted) {
+        _voiceAssistantBusy = false;
+      }
     }
   }
 
@@ -244,6 +291,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     unawaited(_setAssistantBubble(false));
     _clockTimer?.cancel();
     _odometerController.dispose();
+    _voiceVideoController?.dispose();
     super.dispose();
   }
 
@@ -257,7 +305,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         child: Consumer<AppProvider>(
           builder: (context, provider, child) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) _syncAssistantAmbient(provider);
+              if (mounted && context.mounted) _syncAssistantAmbient(provider);
             });
             if (provider.isLoading) {
               return const Center(
@@ -998,7 +1046,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       await closeDialog();
       voiceStatus.dispose();
       recognizedPreview.dispose();
-      if (mounted) {
+      if (mounted && context.mounted) {
         setState(() => _voiceAssistantBusy = false);
       }
     }
@@ -1335,6 +1383,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     var soundsEnabled = provider.soundsEnabled;
     var wakeWordEnabled = provider.wakeWordEnabled;
     var floatingBubbleEnabled = provider.floatingAssistantBubbleEnabled;
+    var quickVoiceCommandsEnabled = provider.quickVoiceCommandsEnabled;
+    var voiceVolumeControlEnabled = provider.voiceVolumeControlEnabled;
+    var voiceMediaControlEnabled = provider.voiceMediaControlEnabled;
     var mapVehicleIcon = provider.mapVehicleIcon;
 
     showDialog(
@@ -1513,6 +1564,49 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               const SizedBox(height: 8),
                               SwitchListTile(
                                 contentPadding: EdgeInsets.zero,
+                                value: quickVoiceCommandsEnabled,
+                                onChanged: (value) async {
+                                  if (value) {
+                                    await _requestVoicePermission();
+                                  }
+                                  setDialogState(() {
+                                    quickVoiceCommandsEnabled = value;
+                                  });
+                                },
+                                secondary: const Icon(Icons.flash_on),
+                                title:
+                                    const Text('Comandos rápidos sem "Ei Pin"'),
+                                subtitle: const Text(
+                                  'Reconhece volume e música direto, sem chamar o assistente.',
+                                ),
+                              ),
+                              if (quickVoiceCommandsEnabled) ...[
+                                CheckboxListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  value: voiceVolumeControlEnabled,
+                                  onChanged: (value) {
+                                    setDialogState(() {
+                                      voiceVolumeControlEnabled = value ?? true;
+                                    });
+                                  },
+                                  secondary: const Icon(Icons.volume_up),
+                                  title: const Text('Controlar volume por voz'),
+                                ),
+                                CheckboxListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  value: voiceMediaControlEnabled,
+                                  onChanged: (value) {
+                                    setDialogState(() {
+                                      voiceMediaControlEnabled = value ?? true;
+                                    });
+                                  },
+                                  secondary: const Icon(Icons.skip_next),
+                                  title: const Text('Controlar música por voz'),
+                                ),
+                              ],
+                              const SizedBox(height: 8),
+                              SwitchListTile(
+                                contentPadding: EdgeInsets.zero,
                                 value: floatingBubbleEnabled,
                                 onChanged: (value) async {
                                   if (value) {
@@ -1684,6 +1778,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           await provider.saveAssistantAmbientSettings(
                             wakeWordEnabled: wakeWordEnabled,
                             floatingBubbleEnabled: floatingBubbleEnabled,
+                            quickVoiceCommandsEnabled:
+                                quickVoiceCommandsEnabled,
+                            voiceVolumeControlEnabled:
+                                voiceVolumeControlEnabled,
+                            voiceMediaControlEnabled: voiceMediaControlEnabled,
                           );
 
                           if (dialogContext.mounted) {
@@ -2142,6 +2241,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             provider.setActiveNavigationRoute(
               route: route,
               destination: destination,
+              map: currentMap,
+              calculator: calculator,
             );
           }
         }
@@ -3212,7 +3313,8 @@ class _CockpitRoadMatcher {
   }) {
     _CandidateRoadSegment? best;
 
-    for (final road in mapData.roads) {
+    final searchRoads = mapData.roadsNear(origin, 0.0016);
+    for (final road in searchRoads) {
       final points = road.points;
       if (points.length < 2) continue;
       for (var i = 0; i < points.length - 1; i++) {
@@ -3876,6 +3978,16 @@ class _PelotasMapData {
   final List<_PelotasRoad> roads;
   final List<_FuelStation> fuelStations;
 
+  Iterable<_PelotasRoad> roadsNear(Offset origin, double radiusDegrees) {
+    final rect = Rect.fromLTRB(
+      origin.dx - radiusDegrees,
+      origin.dy - radiusDegrees,
+      origin.dx + radiusDegrees,
+      origin.dy + radiusDegrees,
+    );
+    return roads.where((road) => road.bounds.overlaps(rect));
+  }
+
   static Future<_PelotasMapData> load() async {
     final text = await rootBundle.loadString('assets/maps/rs_sul_region.json');
     final json = jsonDecode(text) as Map<String, dynamic>;
@@ -3902,10 +4014,12 @@ class _PelotasRoad {
   const _PelotasRoad({
     required this.rank,
     required this.points,
+    required this.bounds,
   });
 
   final int rank;
   final List<Offset> points;
+  final Rect bounds;
 
   factory _PelotasRoad.fromJson(Map<String, dynamic> json) {
     final points = (json['p'] as List).map((point) {
@@ -3918,8 +4032,24 @@ class _PelotasRoad {
     return _PelotasRoad(
       rank: (json['r'] as num).toInt(),
       points: points,
+      bounds: _boundsForOffsets(points),
     );
   }
+}
+
+Rect _boundsForOffsets(List<Offset> points) {
+  if (points.isEmpty) return Rect.zero;
+  var minLon = points.first.dx;
+  var maxLon = points.first.dx;
+  var minLat = points.first.dy;
+  var maxLat = points.first.dy;
+  for (final point in points.skip(1)) {
+    minLon = math.min(minLon, point.dx);
+    maxLon = math.max(maxLon, point.dx);
+    minLat = math.min(minLat, point.dy);
+    maxLat = math.max(maxLat, point.dy);
+  }
+  return Rect.fromLTRB(minLon, minLat, maxLon, maxLat);
 }
 
 class _FuelStation {
@@ -4044,9 +4174,12 @@ class _PelotasMapPainter extends CustomPainter {
     };
 
     final visibleRect = (Offset.zero & size).inflate(_hasGps ? 260 : 40);
+    final visibleLonLatRect =
+        _visibleLonLatRect(size).inflate(_latitudeSpan * 0.8);
 
     for (final road in data.roads) {
       if (road.points.length < 2) continue;
+      if (!road.bounds.overlaps(visibleLonLatRect)) continue;
 
       final projectedPoints = road.points
           .map((point) => _project(point, size))
@@ -4299,6 +4432,20 @@ class _PelotasMapPainter extends CustomPainter {
   Offset get _viewCenter {
     if (_hasGps) return Offset(longitude!, latitude!);
     return data.center;
+  }
+
+  Rect _visibleLonLatRect(Size size) {
+    final center = _viewCenter;
+    final latSpan = _latitudeSpan;
+    final centerLat = center.dy * math.pi / 180;
+    final cosLat = math.cos(centerLat).abs().clamp(0.25, 1.0);
+    final lonSpan = latSpan * (size.width / size.height) / cosLat;
+    return Rect.fromLTRB(
+      center.dx - lonSpan / 2,
+      center.dy - latSpan / 2,
+      center.dx + lonSpan / 2,
+      center.dy + latSpan / 2,
+    );
   }
 
   double get _latitudeSpan => _hasGps ? gpsLatitudeSpan : 0.045;

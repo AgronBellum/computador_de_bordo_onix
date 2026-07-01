@@ -110,11 +110,15 @@ class OfflineRoad {
     required this.rank,
     required this.points,
     this.name,
+    this.oneway = 0,
   });
 
   final int rank;
   final String? name;
   final List<Offset> points;
+
+  /// 0 = mão dupla, 1 = sentido dos pontos OSM, -1 = sentido reverso.
+  final int oneway;
 
   factory OfflineRoad.fromJson(Map<String, dynamic> json) {
     final points = (json['p'] as List).map((point) {
@@ -128,6 +132,7 @@ class OfflineRoad {
       rank: (json['r'] as num?)?.toInt() ?? 1,
       name: json['n'] as String?,
       points: points,
+      oneway: (json['o'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -135,6 +140,7 @@ class OfflineRoad {
     return {
       'r': rank,
       if (name != null && name!.trim().isNotEmpty) 'n': name,
+      if (oneway != 0) 'o': oneway,
       'p': points.map((point) => [point.dy, point.dx]).toList(),
     };
   }

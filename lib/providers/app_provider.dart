@@ -62,6 +62,7 @@ class AppProvider extends ChangeNotifier {
   final GpsService _gps = GpsService();
   final OfflineMapService _mapService = OfflineMapService();
   final AudioAlertService _audio = AudioAlertService();
+  bool _disposed = false;
 
   TripModel? _activeTrip;
   List<TripModel> _trips = [];
@@ -72,6 +73,9 @@ class AppProvider extends ChangeNotifier {
   bool _soundsEnabled = true;
   bool _wakeWordEnabled = false;
   bool _floatingAssistantBubbleEnabled = false;
+  bool _quickVoiceCommandsEnabled = false;
+  bool _voiceVolumeControlEnabled = true;
+  bool _voiceMediaControlEnabled = true;
   bool _autoGpsStarting = false;
   bool _lowFuelAlertPlayed = false;
   bool _reserveFuelAlertPlayed = false;
@@ -96,6 +100,8 @@ class AppProvider extends ChangeNotifier {
   Timer? _smartGpsStartTimer;
   DateTime? _lastGpsPositionAt;
   DateTime? _lastGpsUiNotifyAt;
+  DateTime? _lastGpsPersistAt;
+  DateTime? _lastGpsPointPersistAt;
   double _cityConsumption = 9.0;
   double _tripConsumption = 12.0;
   double _fuelPrice = 5.79;
@@ -110,6 +116,10 @@ class AppProvider extends ChangeNotifier {
   Map<String, List<String>> _voiceDestinationAliases = {};
   OfflineRoute? _activeNavigationRoute;
   MapDestination? _activeNavigationDestination;
+  OfflineMapData? _activeNavigationMap;
+  OfflineRouteCalculator? _activeNavigationCalculator;
+  bool _navigationRerouting = false;
+  DateTime? _lastNavigationRerouteAt;
 
   double? _lastRemainingFuel;
   double? _lastOdometer;
@@ -260,6 +270,9 @@ class AppProvider extends ChangeNotifier {
   bool get soundsEnabled => _soundsEnabled;
   bool get wakeWordEnabled => _wakeWordEnabled;
   bool get floatingAssistantBubbleEnabled => _floatingAssistantBubbleEnabled;
+  bool get quickVoiceCommandsEnabled => _quickVoiceCommandsEnabled;
+  bool get voiceVolumeControlEnabled => _voiceVolumeControlEnabled;
+  bool get voiceMediaControlEnabled => _voiceMediaControlEnabled;
   double get gpsDistance => _gpsDistance;
   int get gpsUpdateCount => _gpsUpdateCount;
   int get gpsRawPositionCount => _gpsRawPositionCount;
@@ -367,6 +380,12 @@ class AppProvider extends ChangeNotifier {
     _wakeWordEnabled = prefs.getBool('wake_word_enabled') ?? false;
     _floatingAssistantBubbleEnabled =
         prefs.getBool('floating_assistant_bubble_enabled') ?? false;
+    _quickVoiceCommandsEnabled =
+        prefs.getBool('quick_voice_commands_enabled') ?? false;
+    _voiceVolumeControlEnabled =
+        prefs.getBool('voice_volume_control_enabled') ?? true;
+    _voiceMediaControlEnabled =
+        prefs.getBool('voice_media_control_enabled') ?? true;
     _audio.setEnabled(_soundsEnabled);
     _drivingMode = prefs.getString('driving_mode') ?? 'city';
     _vehicleName = prefs.getString('vehicle_name') ?? 'ONIX';
@@ -386,6 +405,7 @@ class AppProvider extends ChangeNotifier {
     required bool filterChanged,
     required String oilType,
   }) async {
+    if (_disposed) return;
     _oilLastChangeKm = lastChangeKm;
     _oilNextChangeKm = nextChangeKm;
     _oilFilterChanged = filterChanged;
@@ -443,6 +463,7 @@ class AppProvider extends ChangeNotifier {
   Future<void> saveVoiceDestinationAliases(
     Map<String, String> destinationPhrases,
   ) async {
+    if (_disposed) return;
     final next = <String, List<String>>{};
     for (final destination in _voiceDestinations) {
       final phrases = _textToPhrases(destinationPhrases[destination.id] ?? '');
@@ -464,15 +485,34 @@ class AppProvider extends ChangeNotifier {
   Future<void> saveAssistantAmbientSettings({
     required bool wakeWordEnabled,
     required bool floatingBubbleEnabled,
+    bool quickVoiceCommandsEnabled = false,
+    bool voiceVolumeControlEnabled = true,
+    bool voiceMediaControlEnabled = true,
   }) async {
+    if (_disposed) return;
     _wakeWordEnabled = wakeWordEnabled;
     _floatingAssistantBubbleEnabled = floatingBubbleEnabled;
+    _quickVoiceCommandsEnabled = quickVoiceCommandsEnabled;
+    _voiceVolumeControlEnabled = voiceVolumeControlEnabled;
+    _voiceMediaControlEnabled = voiceMediaControlEnabled;
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('wake_word_enabled', _wakeWordEnabled);
     await prefs.setBool(
       'floating_assistant_bubble_enabled',
       _floatingAssistantBubbleEnabled,
+    );
+    await prefs.setBool(
+      'quick_voice_commands_enabled',
+      _quickVoiceCommandsEnabled,
+    );
+    await prefs.setBool(
+      'voice_volume_control_enabled',
+      _voiceVolumeControlEnabled,
+    );
+    await prefs.setBool(
+      'voice_media_control_enabled',
+      _voiceMediaControlEnabled,
     );
 
     _statusMessage = 'Assistente atualizado';
@@ -488,6 +528,7 @@ class AppProvider extends ChangeNotifier {
     required String vehicleName,
     required String mapVehicleIcon,
   }) async {
+    if (_disposed) return;
     _cityConsumption = cityConsumption;
     _tripConsumption = tripConsumption;
     _fuelPrice = fuelPrice;
@@ -513,6 +554,7 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> answerVoiceAssistantCommand(String command) async {
+    if (_disposed) return;
     final normalized = _normalizeVoiceCommand(command);
 
     final routed = await _tryActivateVoiceNavigation(normalized);
@@ -557,6 +599,7 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<bool> _tryActivateVoiceNavigation(String normalized) async {
+    if (_disposed) return false;
     final destination = _detectVoiceDestination(normalized);
     if (destination == null) return false;
 
@@ -572,7 +615,8 @@ class AppProvider extends ChangeNotifier {
 
     try {
       final map = await _mapService.loadCurrentMap();
-      final route = OfflineRouteCalculator(map).calculate(
+      final calculator = OfflineRouteCalculator(map);
+      final route = calculator.calculate(
         origin,
         destination.position,
       );
@@ -584,6 +628,9 @@ class AppProvider extends ChangeNotifier {
       }
 
       _activeNavigationRoute = route;
+      _activeNavigationMap = map;
+      _activeNavigationCalculator = calculator;
+      _lastNavigationRerouteAt = DateTime.now();
       _activeNavigationDestination = MapDestination(
         name: destination.name,
         position: destination.position,
@@ -831,6 +878,7 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> setDrivingMode(String mode) async {
+    if (_disposed) return;
     if (mode != 'city' && mode != 'trip') return;
     if (_drivingMode == mode) return;
 
@@ -851,9 +899,14 @@ class AppProvider extends ChangeNotifier {
   void setActiveNavigationRoute({
     required OfflineRoute route,
     required MapDestination destination,
+    OfflineMapData? map,
+    OfflineRouteCalculator? calculator,
   }) {
     _activeNavigationRoute = route;
     _activeNavigationDestination = destination;
+    if (map != null) _activeNavigationMap = map;
+    if (calculator != null) _activeNavigationCalculator = calculator;
+    _lastNavigationRerouteAt = DateTime.now();
     notifyListeners();
   }
 
@@ -865,11 +918,15 @@ class AppProvider extends ChangeNotifier {
 
     _activeNavigationRoute = null;
     _activeNavigationDestination = null;
+    _activeNavigationMap = null;
+    _activeNavigationCalculator = null;
+    _lastNavigationRerouteAt = null;
+    _navigationRerouting = false;
     notifyListeners();
   }
 
   Future<void> applySelectedConsumption() async {
-    if (_activeTrip == null || selectedConsumption <= 0) return;
+    if (_disposed || _activeTrip == null || selectedConsumption <= 0) return;
 
     _activeTrip = _activeTrip!.withConsumption(selectedConsumption);
     await _db.updateTrip(_activeTrip!);
@@ -877,6 +934,7 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> toggleThemeMode() async {
+    if (_disposed) return;
     _isDarkMode = !_isDarkMode;
 
     final prefs = await SharedPreferences.getInstance();
@@ -966,6 +1024,7 @@ class AppProvider extends ChangeNotifier {
     required double consumption,
     required double odometer,
   }) async {
+    if (_disposed) return;
     if (liters <= 0 || consumption <= 0) {
       _statusMessage = 'Litros e consumo devem ser maiores que zero';
       notifyListeners();
@@ -1012,6 +1071,7 @@ class AppProvider extends ChangeNotifier {
     required double odometer,
     double? previousRemaining,
   }) async {
+    if (_disposed) return;
     if (newLiters <= 0 || consumption <= 0) {
       _statusMessage = 'Litros e consumo devem ser maiores que zero';
       notifyListeners();
@@ -1035,6 +1095,8 @@ class AppProvider extends ChangeNotifier {
       _gps.stopTracking();
       _isGpsTracking = false;
       _lastGpsUiNotifyAt = null;
+      _lastGpsPersistAt = null;
+      _lastGpsPointPersistAt = null;
 
       await _saveRefuelData();
       await _db.endTrip(_activeTrip!.id!);
@@ -1078,7 +1140,8 @@ class AppProvider extends ChangeNotifier {
   }) {
     _smartGpsStartTimer?.cancel();
 
-    if (_activeTrip == null || _isGpsTracking || _gpsStoppedByUser) return;
+    if (_disposed || _activeTrip == null || _isGpsTracking || _gpsStoppedByUser)
+      return;
     if (_smartGpsAutoAttempts >= 5) {
       _statusMessage = 'GPS automatico sem sinal - toque para iniciar';
       notifyListeners();
@@ -1089,12 +1152,14 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
 
     _smartGpsStartTimer = Timer(delay, () async {
+      if (_disposed) return;
       await _trySmartGpsAutoStart();
     });
   }
 
   Future<void> _trySmartGpsAutoStart() async {
-    if (_activeTrip == null || _isGpsTracking || _gpsStoppedByUser) return;
+    if (_disposed || _activeTrip == null || _isGpsTracking || _gpsStoppedByUser)
+      return;
     if (_autoGpsStarting) return;
 
     _autoGpsStarting = true;
@@ -1106,13 +1171,14 @@ class AppProvider extends ChangeNotifier {
       _autoGpsStarting = false;
     }
 
+    if (_disposed) return;
     if (!_isGpsTracking && !_gpsStoppedByUser && _activeTrip != null) {
       _scheduleSmartGpsAutoStart(delay: const Duration(seconds: 12));
     }
   }
 
   Future<void> updateOdometer(double newOdometer) async {
-    if (_activeTrip == null) return;
+    if (_activeTrip == null || _disposed) return;
 
     if (newOdometer < _activeTrip!.currentOdometer) {
       _statusMessage = 'KM não pode ser menor que o atual';
@@ -1126,16 +1192,18 @@ class AppProvider extends ChangeNotifier {
     await _saveLastOdometer(newOdometer);
     await _saveRefuelData();
 
+    if (_disposed) return;
     _statusMessage = 'KM atualizado: ${newOdometer.toStringAsFixed(0)}';
 
     notifyListeners();
     await _audio.playManualNumbers();
+    if (_disposed) return;
     await _checkDashboardAudioAlerts();
     await _restartGpsTrackingFromCurrentTrip();
   }
 
   Future<void> setCurrentOdometer(double odometer) async {
-    if (_activeTrip == null) return;
+    if (_disposed || _activeTrip == null) return;
 
     _activeTrip = _activeTrip!.withCurrentOdometer(odometer);
     await _db.updateTrip(_activeTrip!);
@@ -1150,7 +1218,7 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> setRemainingFuel(double liters) async {
-    if (_activeTrip == null) return;
+    if (_disposed || _activeTrip == null) return;
 
     _activeTrip = _activeTrip!.withRemainingFuel(liters);
     await _db.updateTrip(_activeTrip!);
@@ -1162,7 +1230,7 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> setEstimatedRange(double rangeKm) async {
-    if (_activeTrip == null) return;
+    if (_disposed || _activeTrip == null) return;
 
     _activeTrip = _activeTrip!.withEstimatedRange(rangeKm);
     await _db.updateTrip(_activeTrip!);
@@ -1173,7 +1241,7 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> setDistanceTraveled(double distanceKm) async {
-    if (_activeTrip == null) return;
+    if (_disposed || _activeTrip == null) return;
 
     _activeTrip = _activeTrip!.withDistanceTraveled(distanceKm);
     await _db.updateTrip(_activeTrip!);
@@ -1198,6 +1266,7 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> startGpsTracking({bool automatic = false}) async {
+    if (_disposed) return;
     if (!automatic) {
       _gpsStoppedByUser = false;
       _smartGpsStartTimer?.cancel();
@@ -1257,10 +1326,7 @@ class AppProvider extends ChangeNotifier {
         _gpsRawPositionCount++;
         _lastGpsAccuracy = position.accuracy;
         _lastGpsHeading = _headingForPosition(position);
-        _lastGpsLatitude = position.latitude;
-        _lastGpsLongitude = position.longitude;
         _lastGpsPositionAt = DateTime.now();
-        _checkNavigationArrival(position.latitude, position.longitude);
         if (_gpsRawPositionCount == 1) {
           _statusMessage = 'GPS recebendo posições: $_gpsRawPositionCount';
           _notifyGpsUi(force: true);
@@ -1279,8 +1345,6 @@ class AppProvider extends ChangeNotifier {
         _gpsIgnoredPositionCount++;
         _lastGpsAccuracy = position.accuracy;
         _lastGpsHeading = _headingForPosition(position);
-        _lastGpsLatitude = position.latitude;
-        _lastGpsLongitude = position.longitude;
         _statusMessage = 'GPS ignorou ponto: $reason';
         _notifyGpsUi(force: true);
       },
@@ -1302,6 +1366,7 @@ class AppProvider extends ChangeNotifier {
         _lastGpsLatitude = lat;
         _lastGpsLongitude = lng;
         _checkNavigationArrival(lat, lng);
+        await _maybeRerouteActiveNavigation(lat, lng);
 
         final deltaKm = deltaMeters / 1000;
         final newOdometer = _activeTrip!.currentOdometer + deltaKm;
@@ -1311,19 +1376,33 @@ class AppProvider extends ChangeNotifier {
             'Total: ${_activeTrip!.distanceTraveled.toStringAsFixed(1)}km | '
             'Atualizações: $_gpsUpdateCount';
 
-        await _db.updateTrip(_activeTrip!);
-        await _saveLastOdometer(newOdometer);
-        await _saveRefuelData();
+        final now = DateTime.now();
+        final shouldPersistTrip = _lastGpsPersistAt == null ||
+            now.difference(_lastGpsPersistAt!) >= const Duration(seconds: 4) ||
+            deltaMeters >= 80;
+        if (shouldPersistTrip) {
+          _lastGpsPersistAt = now;
+          await _db.updateTrip(_activeTrip!);
+          await _saveLastOdometer(newOdometer);
+          await _saveRefuelData();
+        }
 
-        await _db.addGpsPoint(
-          _activeTrip!.id!,
-          GpsPoint(
-            latitude: lat,
-            longitude: lng,
-            odometer: newOdometer,
-            timestamp: DateTime.now(),
-          ),
-        );
+        final shouldPersistPoint = _lastGpsPointPersistAt == null ||
+            now.difference(_lastGpsPointPersistAt!) >=
+                const Duration(seconds: 5) ||
+            deltaMeters >= 25;
+        if (shouldPersistPoint) {
+          _lastGpsPointPersistAt = now;
+          await _db.addGpsPoint(
+            _activeTrip!.id!,
+            GpsPoint(
+              latitude: lat,
+              longitude: lng,
+              odometer: newOdometer,
+              timestamp: now,
+            ),
+          );
+        }
 
         notifyListeners();
         await _checkDashboardAudioAlerts();
@@ -1349,13 +1428,15 @@ class AppProvider extends ChangeNotifier {
     _lastGpsHeading = null;
     _lastGpsPositionAt = null;
     _lastGpsUiNotifyAt = null;
+    _lastGpsPersistAt = null;
+    _lastGpsPointPersistAt = null;
     _suppressNextGpsConnectedAudio = true;
 
     await startGpsTracking();
   }
 
   Future<void> reconnectGpsTracking() async {
-    if (_activeTrip == null) return;
+    if (_disposed || _activeTrip == null) return;
 
     _gps.stopTracking();
     _isGpsTracking = false;
@@ -1370,6 +1451,8 @@ class AppProvider extends ChangeNotifier {
     _lastGpsHeading = null;
     _lastGpsPositionAt = null;
     _lastGpsUiNotifyAt = null;
+    _lastGpsPersistAt = null;
+    _lastGpsPointPersistAt = null;
     _suppressNextGpsConnectedAudio = false;
     _statusMessage = 'Reconectando GPS...';
     notifyListeners();
@@ -1418,6 +1501,48 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> _maybeRerouteActiveNavigation(double lat, double lon) async {
+    if (_navigationRerouting ||
+        _activeNavigationRoute == null ||
+        _activeNavigationDestination == null) {
+      return;
+    }
+
+    final now = DateTime.now();
+    final last = _lastNavigationRerouteAt;
+    if (last != null && now.difference(last) < const Duration(seconds: 12)) {
+      return;
+    }
+
+    final origin = Offset(lon, lat);
+    final distance =
+        _distanceToRouteMeters(origin, _activeNavigationRoute!.points);
+    if (distance < 75) return;
+
+    _navigationRerouting = true;
+    _lastNavigationRerouteAt = now;
+    try {
+      final map = _activeNavigationMap ?? await _mapService.loadCurrentMap();
+      _activeNavigationMap = map;
+      final calculator =
+          _activeNavigationCalculator ?? OfflineRouteCalculator(map);
+      _activeNavigationCalculator = calculator;
+      final destination = _activeNavigationDestination!;
+      final route = await Future<OfflineRoute?>(
+        () => calculator.calculate(origin, destination.position),
+      );
+      if (route == null) return;
+
+      _activeNavigationRoute = route;
+      _statusMessage = 'Rota recalculada';
+      notifyListeners();
+    } catch (error) {
+      debugPrint('[Navigation] reroute failed: $error');
+    } finally {
+      _navigationRerouting = false;
+    }
+  }
+
   void _checkNavigationArrival(double lat, double lon) {
     final destination = _activeNavigationDestination;
     if (destination == null || _activeNavigationRoute == null) return;
@@ -1439,7 +1564,7 @@ class AppProvider extends ChangeNotifier {
   void _startGpsWatchdog() {
     _gpsWatchdogTimer?.cancel();
     _gpsWatchdogTimer = Timer.periodic(const Duration(seconds: 20), (_) {
-      if (_activeTrip == null) return;
+      if (_disposed || _activeTrip == null) return;
 
       if (!_gps.isTracking) {
         _handleGpsStopped();
@@ -1459,10 +1584,12 @@ class AppProvider extends ChangeNotifier {
   }
 
   void _handleGpsStopped() {
-    if (!_isGpsTracking) return;
+    if (_disposed || !_isGpsTracking) return;
 
     _isGpsTracking = false;
     _lastGpsUiNotifyAt = null;
+    _lastGpsPersistAt = null;
+    _lastGpsPointPersistAt = null;
     _statusMessage = _gpsStoppedByUser
         ? 'GPS pausado pelo usuário'
         : 'GPS parou - tentando iniciar novamente em alguns segundos';
@@ -1498,6 +1625,7 @@ class AppProvider extends ChangeNotifier {
   void _scheduleStartupCareAudio() {
     _startupCareTimer?.cancel();
     _startupCareTimer = Timer(const Duration(minutes: 1), () {
+      if (_disposed) return;
       _audio.playStartupCare();
     });
   }
@@ -1505,7 +1633,7 @@ class AppProvider extends ChangeNotifier {
   void _scheduleThirtyMinuteTripAudio() {
     _thirtyMinuteTripTimer?.cancel();
 
-    if (_activeTrip == null || _thirtyMinuteAlertPlayed) return;
+    if (_disposed || _activeTrip == null || _thirtyMinuteAlertPlayed) return;
 
     final elapsed = DateTime.now().difference(_activeTrip!.createdAt);
     final remaining = const Duration(minutes: 30) - elapsed;
@@ -1517,7 +1645,7 @@ class AppProvider extends ChangeNotifier {
     }
 
     _thirtyMinuteTripTimer = Timer(remaining, () {
-      if (_activeTrip == null || _thirtyMinuteAlertPlayed) return;
+      if (_disposed || _activeTrip == null || _thirtyMinuteAlertPlayed) return;
 
       _thirtyMinuteAlertPlayed = true;
       _audio.playThirtyMinuteTrip();
@@ -1525,13 +1653,16 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> _checkDashboardAudioAlerts() async {
+    if (_disposed) return;
     await _checkFuelLevelAlerts();
+    if (_disposed) return;
     await _checkHundredKmAlert();
+    if (_disposed) return;
     await _checkThirtyMinuteTripAlert();
   }
 
   Future<void> _checkFuelLevelAlerts() async {
-    if (_activeTrip == null) return;
+    if (_disposed || _activeTrip == null) return;
 
     final pct = fuelPercentage;
 
@@ -1562,7 +1693,7 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> _checkHundredKmAlert() async {
-    if (_activeTrip == null || _hundredKmAlertPlayed) return;
+    if (_disposed || _activeTrip == null || _hundredKmAlertPlayed) return;
     if (_activeTrip!.distanceTraveled < 100) return;
 
     _hundredKmAlertPlayed = true;
@@ -1570,7 +1701,7 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> _checkThirtyMinuteTripAlert() async {
-    if (_activeTrip == null || _thirtyMinuteAlertPlayed) return;
+    if (_disposed || _activeTrip == null || _thirtyMinuteAlertPlayed) return;
 
     final elapsed = DateTime.now().difference(_activeTrip!.createdAt);
     if (elapsed.inMinutes < 30) return;
@@ -1580,6 +1711,7 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> stopGpsTracking() async {
+    if (_disposed) return;
     _gpsStoppedByUser = true;
     _smartGpsStartTimer?.cancel();
     _gpsWatchdogTimer?.cancel();
@@ -1592,6 +1724,8 @@ class AppProvider extends ChangeNotifier {
 
     _isGpsTracking = false;
     _lastGpsUiNotifyAt = null;
+    _lastGpsPersistAt = null;
+    _lastGpsPointPersistAt = null;
     _statusMessage =
         'GPS pausado - percorrido: ${_gpsDistance.toStringAsFixed(0)}m';
 
@@ -1599,7 +1733,7 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> endCurrentTrip() async {
-    if (_activeTrip == null) return;
+    if (_disposed || _activeTrip == null) return;
 
     _lastRemainingFuel = _activeTrip!.remainingFuel;
     _lastOdometer = _activeTrip!.currentOdometer;
@@ -1610,6 +1744,8 @@ class AppProvider extends ChangeNotifier {
     _gps.stopTracking();
     _isGpsTracking = false;
     _lastGpsUiNotifyAt = null;
+    _lastGpsPersistAt = null;
+    _lastGpsPointPersistAt = null;
     _gpsWatchdogTimer?.cancel();
     _smartGpsStartTimer?.cancel();
 
@@ -1630,12 +1766,21 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> deleteTrip(int id) async {
+    if (_disposed) return;
     await _db.deleteTrip(id);
+    if (_disposed) return;
     await _loadTrips();
   }
 
   @override
+  void notifyListeners() {
+    if (_disposed) return;
+    super.notifyListeners();
+  }
+
+  @override
   void dispose() {
+    _disposed = true;
     _startupCareTimer?.cancel();
     _thirtyMinuteTripTimer?.cancel();
     _gpsWatchdogTimer?.cancel();
@@ -1644,4 +1789,50 @@ class AppProvider extends ChangeNotifier {
     _audio.dispose();
     super.dispose();
   }
+}
+
+double _distanceMeters(Offset a, Offset b) {
+  const p = 0.017453292519943295;
+  final hav = 0.5 -
+      math.cos((b.dy - a.dy) * p) / 2 +
+      math.cos(a.dy * p) *
+          math.cos(b.dy * p) *
+          (1 - math.cos((b.dx - a.dx) * p)) /
+          2;
+  return 12742000 * math.asin(math.sqrt(hav));
+}
+
+double _distanceToRouteMeters(Offset point, List<Offset> route) {
+  if (route.isEmpty) return double.infinity;
+  if (route.length == 1) return _distanceMeters(point, route.first);
+
+  var best = double.infinity;
+  for (var i = 1; i < route.length; i++) {
+    final distance = _distanceToSegmentMeters(point, route[i - 1], route[i]);
+    if (distance < best) best = distance;
+  }
+  return best;
+}
+
+double _distanceToSegmentMeters(Offset point, Offset a, Offset b) {
+  const latScale = 111320.0;
+  final lonScale = latScale * math.cos(point.dy * math.pi / 180).abs();
+  final px = point.dx * lonScale;
+  final py = point.dy * latScale;
+  final ax = a.dx * lonScale;
+  final ay = a.dy * latScale;
+  final bx = b.dx * lonScale;
+  final by = b.dy * latScale;
+
+  final abx = bx - ax;
+  final aby = by - ay;
+  final ab2 = abx * abx + aby * aby;
+  if (ab2 <= 0) return _distanceMeters(point, a);
+
+  final t = (((px - ax) * abx + (py - ay) * aby) / ab2).clamp(0.0, 1.0);
+  final cx = ax + abx * t;
+  final cy = ay + aby * t;
+  final dx = px - cx;
+  final dy = py - cy;
+  return math.sqrt(dx * dx + dy * dy);
 }

@@ -119,6 +119,8 @@ class _OfflineMapScreenState extends State<OfflineMapScreen> {
       provider.setActiveNavigationRoute(
         route: route,
         destination: destination,
+        map: map,
+        calculator: calculator,
       );
     } else {
       provider.clearActiveNavigationRoute();
@@ -172,6 +174,8 @@ class _OfflineMapScreenState extends State<OfflineMapScreen> {
       provider.setActiveNavigationRoute(
         route: route,
         destination: _destination!,
+        map: map,
+        calculator: calculator,
       );
     }
   }
@@ -244,6 +248,8 @@ class _OfflineMapScreenState extends State<OfflineMapScreen> {
     provider.setActiveNavigationRoute(
       route: bestRoute,
       destination: destination,
+      map: map,
+      calculator: calculator,
     );
   }
 
@@ -1866,9 +1872,12 @@ class _FullscreenMapPainter extends CustomPainter {
         ..style = PaintingStyle.stroke,
     };
     final visibleRect = (Offset.zero & size).inflate(80);
+    final visibleLonLatRect =
+        _visibleLonLatRect(size).inflate(viewLatSpan * 0.45);
 
     for (final road in map.roads) {
       if (road.points.length < 2) continue;
+      if (!_roadBounds(road).overlaps(visibleLonLatRect)) continue;
 
       final points = road.points.map((point) => _project(point, size)).toList();
       if (!_projectedPathTouches(points, visibleRect)) continue;
@@ -2113,6 +2122,20 @@ class _FullscreenMapPainter extends CustomPainter {
     }
   }
 
+  Rect _visibleLonLatRect(Size size) {
+    final center = viewCenter;
+    final latSpan = viewLatSpan;
+    final centerLat = center.dy * math.pi / 180;
+    final cosLat = math.cos(centerLat).abs().clamp(0.25, 1.0);
+    final lonSpan = latSpan * (size.width / size.height) / cosLat;
+    return Rect.fromLTRB(
+      center.dx - lonSpan / 2,
+      center.dy - latSpan / 2,
+      center.dx + lonSpan / 2,
+      center.dy + latSpan / 2,
+    );
+  }
+
   Offset _project(Offset lonLat, Size size) {
     final center = viewCenter;
     final latSpan = viewLatSpan;
@@ -2182,6 +2205,32 @@ class _FullscreenMapPainter extends CustomPainter {
         oldDelegate.darkMode != darkMode ||
         oldDelegate.showVehicle != showVehicle;
   }
+}
+
+final Expando<Rect> _offlineRoadBoundsCache =
+    Expando<Rect>('offlineRoadBounds');
+
+Rect _roadBounds(OfflineRoad road) {
+  final cached = _offlineRoadBoundsCache[road];
+  if (cached != null) return cached;
+  final bounds = _boundsForMapOffsets(road.points);
+  _offlineRoadBoundsCache[road] = bounds;
+  return bounds;
+}
+
+Rect _boundsForMapOffsets(List<Offset> points) {
+  if (points.isEmpty) return Rect.zero;
+  var minLon = points.first.dx;
+  var maxLon = points.first.dx;
+  var minLat = points.first.dy;
+  var maxLat = points.first.dy;
+  for (final point in points.skip(1)) {
+    minLon = math.min(minLon, point.dx);
+    maxLon = math.max(maxLon, point.dx);
+    minLat = math.min(minLat, point.dy);
+    maxLat = math.max(maxLat, point.dy);
+  }
+  return Rect.fromLTRB(minLon, minLat, maxLon, maxLat);
 }
 
 double _distanceMeters(Offset a, Offset b) {

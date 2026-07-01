@@ -15,6 +15,10 @@ class OfflineRouteCalculator {
   final OfflineMapData map;
   _RouteGraph? _graph;
 
+  void invalidateGraph() {
+    _graph = null;
+  }
+
   OfflineRoute? calculate(Offset origin, Offset destination) {
     final graph = _graph ??= _RouteGraph.fromRoads(map.roads);
     if (graph.points.length < 2) return null;
@@ -23,7 +27,7 @@ class OfflineRouteCalculator {
     final end = graph.nearest(destination);
     if (start == null || end == null) return null;
 
-    final pathIndexes = graph.shortestPath(start, end);
+    final pathIndexes = graph.shortestPathAStar(start, end);
     if (pathIndexes.isEmpty) return null;
 
     final points = pathIndexes.map((index) => graph.points[index]).toList();
@@ -149,7 +153,7 @@ class OfflineMapService {
       return;
     }
     if (!await File(path).exists()) {
-      throw const FileSystemException('Mapa offline não encontrado');
+      throw const FileSystemException('Mapa offline nao encontrado');
     }
     await prefs.setString(_currentMapKey, path);
   }
@@ -172,8 +176,11 @@ class OfflineMapService {
     final dir = await _mapDirectory();
     await dir.create(recursive: true);
     final fileName = _safeFileName(map.name);
+    final tempFile = File(p.join(dir.path, '.$fileName.tmp'));
     final file = File(p.join(dir.path, '$fileName.json'));
-    await file.writeAsString(jsonEncode(map.toJson()));
+
+    await tempFile.writeAsString(jsonEncode(map.toJson()));
+    await tempFile.rename(file.path);
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_currentMapKey, file.path);
@@ -294,7 +301,7 @@ class OfflineMapService {
     final results = response as List;
 
     if (results.isEmpty) {
-      throw const FormatException('Cidade não encontrada');
+      throw const FormatException('Cidade nao encontrada');
     }
 
     return _SearchPlace.fromJson(results.first as Map<String, dynamic>);
@@ -325,14 +332,25 @@ out skel qt;
 ''';
     final uri = Uri.https('overpass-api.de', '/api/interpreter');
     final client = HttpClient();
+    client.connectionTimeout = const Duration(seconds: 15);
     try {
       final request = await client.postUrl(uri);
       request.headers.contentType =
           ContentType('application', 'x-www-form-urlencoded');
       request.headers.set(HttpHeaders.userAgentHeader, 'OnyxFuelApp/1.0');
       request.write('data=${Uri.encodeQueryComponent(query)}');
-      final response = await request.close();
-      final text = await response.transform(utf8.decoder).join();
+      final response = await request.close().timeout(
+        const Duration(seconds: 120),
+        onTimeout: () {
+          throw HttpException('Timeout ao baixar mapa');
+        },
+      );
+      final text = await response.transform(utf8.decoder).join().timeout(
+        const Duration(seconds: 30),
+        onTimeout: () {
+          throw HttpException('Timeout lendo resposta do mapa');
+        },
+      );
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw HttpException('Falha ao baixar mapa: ${response.statusCode}');
@@ -346,11 +364,22 @@ out skel qt;
 
   Future<dynamic> _getJson(Uri uri) async {
     final client = HttpClient();
+    client.connectionTimeout = const Duration(seconds: 10);
     try {
       final request = await client.getUrl(uri);
       request.headers.set(HttpHeaders.userAgentHeader, 'OnyxFuelApp/1.0');
-      final response = await request.close();
-      final text = await response.transform(utf8.decoder).join();
+      final response = await request.close().timeout(
+        const Duration(seconds: 15),
+        onTimeout: () {
+          throw HttpException('Timeout na consulta');
+        },
+      );
+      final text = await response.transform(utf8.decoder).join().timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          throw HttpException('Timeout lendo resposta');
+        },
+      );
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw HttpException('Falha na consulta: ${response.statusCode}');
@@ -433,6 +462,7 @@ out skel qt;
         OfflineRoad(
           rank: _roadRank(tags?['highway'] as String?),
           name: tags?['name'] as String?,
+          oneway: _onewayDirection(tags),
           points: points,
         ),
       );
@@ -454,19 +484,47 @@ out skel qt;
     );
   }
 
+  int _onewayDirection(Map<String, dynamic>? tags) {
+    if (tags == null) return 0;
+
+    final oneway = (tags['oneway'] as String?)?.toLowerCase().trim();
+    final junction = (tags['junction'] as String?)?.toLowerCase().trim();
+    final highway = (tags['highway'] as String?)?.toLowerCase().trim();
+
+    if (oneway == '-1' || oneway == 'reverse') return -1;
+    if (oneway == 'yes' ||
+        oneway == 'true' ||
+        oneway == '1' ||
+        oneway == 'designated') {
+      return 1;
+    }
+    if (oneway == 'no' || oneway == 'false' || oneway == '0') return 0;
+
+    if (junction == 'roundabout' || junction == 'circular') return 1;
+    if (highway == 'motorway' || highway == 'motorway_link') return 1;
+
+    return 0;
+  }
+
   int _roadRank(String? highway) {
     switch (highway) {
       case 'motorway':
+      case 'motorway_link':
       case 'trunk':
+      case 'trunk_link':
         return 5;
       case 'primary':
+      case 'primary_link':
         return 4;
       case 'secondary':
+      case 'secondary_link':
         return 3;
       case 'tertiary':
+      case 'tertiary_link':
         return 2;
       case 'residential':
       case 'unclassified':
+      case 'living_street':
         return 1;
       default:
         return 0;
@@ -490,11 +548,12 @@ out skel qt;
   }
 
   String _safeFileName(String value) {
-    return value
+    final result = value
         .toLowerCase()
         .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
         .replaceAll(RegExp(r'_+'), '_')
         .replaceAll(RegExp(r'^_|_$'), '');
+    return result.isEmpty ? 'mapa' : result;
   }
 
   List<MapSearchOption> _brazilStates() {
@@ -574,30 +633,14 @@ out skel qt;
   }
 
   String _normalize(String value) {
-    const accents = {
-      'Ã¡': 'a',
-      'Ã ': 'a',
-      'Ã£': 'a',
-      'Ã¢': 'a',
-      'Ã¤': 'a',
-      'Ã©': 'e',
-      'Ãª': 'e',
-      'Ã«': 'e',
-      'Ã­': 'i',
-      'Ã¯': 'i',
-      'Ã³': 'o',
-      'Ãµ': 'o',
-      'Ã´': 'o',
-      'Ã¶': 'o',
-      'Ãº': 'u',
-      'Ã¼': 'u',
-      'Ã§': 'c',
-    };
-    var result = value.toLowerCase();
-    accents.forEach((from, to) {
-      result = result.replaceAll(from, to);
-    });
-    return result;
+    return value
+        .toLowerCase()
+        .replaceAll(RegExp(r'[\u00E1\u00E0\u00E2\u00E3\u00E4]'), 'a')
+        .replaceAll(RegExp(r'[\u00E9\u00E8\u00EA\u00EB]'), 'e')
+        .replaceAll(RegExp(r'[\u00ED\u00EC\u00EE\u00EF]'), 'i')
+        .replaceAll(RegExp(r'[\u00F3\u00F2\u00F4\u00F5\u00F6]'), 'o')
+        .replaceAll(RegExp(r'[\u00FA\u00F9\u00FB\u00FC]'), 'u')
+        .replaceAll('\u00E7', 'c');
   }
 }
 
@@ -622,88 +665,152 @@ class _SearchPlace {
   }
 }
 
+// ============================================================
+// OPTIMIZED ROUTE GRAPH WITH SPATIAL GRID + A* + DISTANCE CACHE
+// ============================================================
+
 class _RouteGraph {
   _RouteGraph({
     required this.points,
     required this.edges,
+    required this.edgeDistances,
+    required this.spatialGrid,
   });
 
   final List<Offset> points;
   final List<List<_RouteEdge>> edges;
+  final List<List<double>> edgeDistances; // Pre-computed haversine distances
+  final _SpatialGrid spatialGrid;
 
   static _RouteGraph fromRoads(List<OfflineRoad> roads) {
-    final indexes = <String, int>{};
+    // Phase 1: Collect unique points with fast hash-based dedup
+    final indexes = <int, int>{};
     final points = <Offset>[];
     final edges = <List<_RouteEdge>>[];
+    final edgeDistances = <List<double>>[];
 
     int indexFor(Offset point) {
-      final key =
-          '${point.dx.toStringAsFixed(6)},${point.dy.toStringAsFixed(6)}';
+      final key = _pointHash(point);
       final existing = indexes[key];
-      if (existing != null) return existing;
+      if (existing != null) {
+        // Collision check with tolerance
+        final existingPoint = points[existing];
+        if ((existingPoint.dx - point.dx).abs() < 1e-6 &&
+            (existingPoint.dy - point.dy).abs() < 1e-6) {
+          return existing;
+        }
+        // Handle collision with linear probing
+        var probe = key + 1;
+        while (true) {
+          final probeExisting = indexes[probe];
+          if (probeExisting == null) break;
+          final probePoint = points[probeExisting];
+          if ((probePoint.dx - point.dx).abs() < 1e-6 &&
+              (probePoint.dy - point.dy).abs() < 1e-6) {
+            return probeExisting;
+          }
+          probe++;
+        }
+        final index = points.length;
+        indexes[probe] = index;
+        points.add(point);
+        edges.add([]);
+        edgeDistances.add([]);
+        return index;
+      }
 
       final index = points.length;
       indexes[key] = index;
       points.add(point);
       edges.add([]);
+      edgeDistances.add([]);
       return index;
     }
 
+    // Phase 2: Build graph
     for (final road in roads) {
       for (var i = 1; i < road.points.length; i++) {
         final a = indexFor(road.points[i - 1]);
         final b = indexFor(road.points[i]);
+        if (a == b) continue;
+
         final meters = _distanceMeters(points[a], points[b]);
         if (meters <= 0) continue;
+
         final cost = meters * _roadCostFactor(road.rank);
-        edges[a].add(_RouteEdge(b, cost));
-        edges[b].add(_RouteEdge(a, cost));
+        if (road.oneway >= 0) {
+          edges[a].add(_RouteEdge(b, cost));
+          edgeDistances[a].add(meters);
+        }
+        if (road.oneway <= 0) {
+          edges[b].add(_RouteEdge(a, cost));
+          edgeDistances[b].add(meters);
+        }
       }
     }
 
-    return _RouteGraph(points: points, edges: edges);
+    // Phase 3: Build spatial grid for O(1) nearest lookup
+    final spatialGrid = _SpatialGrid.fromPoints(points);
+
+    return _RouteGraph(
+      points: points,
+      edges: edges,
+      edgeDistances: edgeDistances,
+      spatialGrid: spatialGrid,
+    );
   }
 
   int? nearest(Offset target) {
-    if (points.isEmpty) return null;
-
-    var bestIndex = 0;
-    var bestMeters = double.infinity;
-    for (var i = 0; i < points.length; i++) {
-      final meters = _distanceMeters(target, points[i]);
-      if (meters < bestMeters) {
-        bestMeters = meters;
-        bestIndex = i;
-      }
-    }
-    return bestIndex;
+    return spatialGrid.nearest(target, points);
   }
 
-  List<int> shortestPath(int start, int end) {
-    final dist = List<double>.filled(points.length, double.infinity);
-    final previous = List<int?>.filled(points.length, null);
-    final queue = _MinQueue();
+  List<int> shortestPathAStar(int start, int end) {
+    if (start == end) return [start];
 
+    final n = points.length;
+    final dist = List<double>.filled(n, double.infinity);
+    final previous = List<int?>.filled(n, null);
+    final openSet = _FastHeap(n);
+    final inOpenSet = List<bool>.filled(n, false);
+    final closedSet = List<bool>.filled(n, false);
+
+    final endPoint = points[end];
     dist[start] = 0;
-    queue.push(start, 0);
+    openSet.push(start, _heuristic(points[start], endPoint));
+    inOpenSet[start] = true;
 
-    while (queue.isNotEmpty) {
-      final current = queue.pop();
+    while (openSet.isNotEmpty) {
+      final current = openSet.pop();
       if (current == null) break;
-      if (current.priority > dist[current.index]) continue;
-      if (current.index == end) break;
+      inOpenSet[current] = false;
+      closedSet[current] = true;
 
-      for (final edge in edges[current.index]) {
-        final nextDistance = dist[current.index] + edge.cost;
-        if (nextDistance >= dist[edge.to]) continue;
-        dist[edge.to] = nextDistance;
-        previous[edge.to] = current.index;
-        queue.push(edge.to, nextDistance);
+      if (current == end) break;
+
+      final currentEdges = edges[current];
+      for (var i = 0; i < currentEdges.length; i++) {
+        final edge = currentEdges[i];
+        if (closedSet[edge.to]) continue;
+
+        final nextDist = dist[current] + edge.cost;
+        if (nextDist >= dist[edge.to]) continue;
+
+        dist[edge.to] = nextDist;
+        previous[edge.to] = current;
+
+        final priority = nextDist + _heuristic(points[edge.to], endPoint);
+        if (inOpenSet[edge.to]) {
+          openSet.decreaseKey(edge.to, priority);
+        } else {
+          openSet.push(edge.to, priority);
+          inOpenSet[edge.to] = true;
+        }
       }
     }
 
     if (dist[end].isInfinite) return [];
 
+    // Reconstruct path
     final path = <int>[];
     int? cursor = end;
     while (cursor != null) {
@@ -713,6 +820,20 @@ class _RouteGraph {
     }
     return path.reversed.toList();
   }
+
+  static double _heuristic(Offset from, Offset to) {
+    // Euclidean distance in meters (approximate, fast)
+    final dx = (to.dx - from.dx) * 111320.0;
+    final dy = (to.dy - from.dy) * 111320.0;
+    return math.sqrt(dx * dx + dy * dy) * 0.8; // 0.8 = admissible underestimate
+  }
+}
+
+// Fast hash for point deduplication (no string allocation)
+int _pointHash(Offset point) {
+  final lonBits = (point.dx * 1e6).toInt();
+  final latBits = (point.dy * 1e6).toInt();
+  return lonBits * 73856093 ^ latBits * 19349663;
 }
 
 class _RouteEdge {
@@ -722,68 +843,265 @@ class _RouteEdge {
   final double cost;
 }
 
-class _QueueItem {
-  const _QueueItem(this.index, this.priority);
+// ============================================================
+// SPATIAL GRID FOR O(1) NEAREST NEIGHBOR LOOKUP
+// ============================================================
 
-  final int index;
-  final double priority;
-}
+class _SpatialGrid {
+  _SpatialGrid({
+    required this.cells,
+    required this.minLon,
+    required this.minLat,
+    required this.cellSizeLon,
+    required this.cellSizeLat,
+    required this.gridWidth,
+    required this.gridHeight,
+  });
 
-class _MinQueue {
-  final List<_QueueItem> _items = [];
+  final List<List<int>> cells;
+  final double minLon;
+  final double minLat;
+  final double cellSizeLon;
+  final double cellSizeLat;
+  final int gridWidth;
+  final int gridHeight;
 
-  bool get isNotEmpty => _items.isNotEmpty;
+  static const int _targetCellsPerPoint = 8;
+  static const int _maxGridSize = 200;
 
-  void push(int index, double priority) {
-    _items.add(_QueueItem(index, priority));
-    _bubbleUp(_items.length - 1);
+  factory _SpatialGrid.fromPoints(List<Offset> points) {
+    if (points.isEmpty) {
+      return _SpatialGrid(
+        cells: [],
+        minLon: 0,
+        minLat: 0,
+        cellSizeLon: 1,
+        cellSizeLat: 1,
+        gridWidth: 1,
+        gridHeight: 1,
+      );
+    }
+
+    // Compute bounds
+    var minLon = points[0].dx;
+    var maxLon = points[0].dx;
+    var minLat = points[0].dy;
+    var maxLat = points[0].dy;
+
+    for (final point in points) {
+      if (point.dx < minLon) minLon = point.dx;
+      if (point.dx > maxLon) maxLon = point.dx;
+      if (point.dy < minLat) minLat = point.dy;
+      if (point.dy > maxLat) maxLat = point.dy;
+    }
+
+    // Add small padding
+    final lonRange = (maxLon - minLon) * 1.01 + 1e-9;
+    final latRange = (maxLat - minLat) * 1.01 + 1e-9;
+
+    // Calculate grid size: aim for ~8 points per cell
+    final totalCells = (points.length / _targetCellsPerPoint).ceil();
+    final aspectRatio = lonRange / latRange;
+    final gridHeight = math.min(
+      _maxGridSize,
+      math.max(1, math.sqrt(totalCells / aspectRatio).round()),
+    );
+    final gridWidth = math.min(
+      _maxGridSize,
+      math.max(1, (totalCells / gridHeight).round()),
+    );
+
+    final cellSizeLon = lonRange / gridWidth;
+    final cellSizeLat = latRange / gridHeight;
+
+    // Build cells
+    final cells = List.generate(gridWidth * gridHeight, (_) => <int>[]);
+
+    for (var i = 0; i < points.length; i++) {
+      final point = points[i];
+      final gx =
+          ((point.dx - minLon) / cellSizeLon).floor().clamp(0, gridWidth - 1);
+      final gy =
+          ((point.dy - minLat) / cellSizeLat).floor().clamp(0, gridHeight - 1);
+      cells[gy * gridWidth + gx].add(i);
+    }
+
+    return _SpatialGrid(
+      cells: cells,
+      minLon: minLon,
+      minLat: minLat,
+      cellSizeLon: cellSizeLon,
+      cellSizeLat: cellSizeLat,
+      gridWidth: gridWidth,
+      gridHeight: gridHeight,
+    );
   }
 
-  _QueueItem? pop() {
-    if (_items.isEmpty) return null;
-    final first = _items.first;
-    final last = _items.removeLast();
-    if (_items.isNotEmpty) {
-      _items[0] = last;
+  int? nearest(Offset target, List<Offset> points) {
+    if (points.isEmpty) return null;
+
+    final tx = ((target.dx - minLon) / cellSizeLon).floor();
+    final ty = ((target.dy - minLat) / cellSizeLat).floor();
+
+    var bestIndex = 0;
+    var bestDist = double.infinity;
+
+    // Search in expanding rings around target cell
+    final maxRadius = math.max(gridWidth, gridHeight);
+    for (var radius = 0; radius <= maxRadius; radius++) {
+      var foundInRing = false;
+
+      for (var dy = -radius; dy <= radius; dy++) {
+        for (var dx = -radius; dx <= radius; dx++) {
+          if (radius > 0 && dy.abs() < radius && dx.abs() < radius) continue;
+
+          final gx = (tx + dx).clamp(0, gridWidth - 1);
+          final gy = (ty + dy).clamp(0, gridHeight - 1);
+          final cell = cells[gy * gridWidth + gx];
+
+          for (final index in cell) {
+            foundInRing = true;
+            final dist = _quickDistanceSquared(target, points[index]);
+            if (dist < bestDist) {
+              bestDist = dist;
+              bestIndex = index;
+            }
+          }
+        }
+      }
+
+      // If we found points and the closest is closer than the cell diagonal,
+      // we can stop (no point in a farther cell can be closer)
+      if (foundInRing && radius > 0) {
+        final cellDiag = cellSizeLon * cellSizeLon + cellSizeLat * cellSizeLat;
+        if (bestDist < cellDiag * radius * radius) {
+          break;
+        }
+      }
+    }
+
+    return bestIndex;
+  }
+
+  static double _quickDistanceSquared(Offset a, Offset b) {
+    final dx = (b.dx - a.dx) * 111320.0;
+    final dy = (b.dy - a.dy) * 111320.0;
+    return dx * dx + dy * dy;
+  }
+}
+
+// ============================================================
+// FAST BINARY HEAP WITH FIXED CAPACITY (NO GROWING)
+// ============================================================
+
+class _FastHeap {
+  _FastHeap(int capacity)
+      : _items = List<int>.filled(capacity, 0),
+        _priorities = List<double>.filled(capacity, 0),
+        _positions = List<int>.filled(capacity, -1);
+
+  final List<int> _items;
+  final List<double> _priorities;
+  final List<int> _positions;
+  int _size = 0;
+
+  bool get isNotEmpty => _size > 0;
+  bool get isEmpty => _size == 0;
+
+  void push(int index, double priority) {
+    if (_positions[index] >= 0) {
+      // Already in heap, update if better
+      if (priority < _priorities[_positions[index]]) {
+        _priorities[_positions[index]] = priority;
+        _bubbleUp(_positions[index]);
+      }
+      return;
+    }
+
+    _items[_size] = index;
+    _priorities[_size] = priority;
+    _positions[index] = _size;
+    _bubbleUp(_size);
+    _size++;
+  }
+
+  int? pop() {
+    if (_size == 0) return null;
+    final result = _items[0];
+    _positions[result] = -1;
+    _size--;
+
+    if (_size > 0) {
+      _items[0] = _items[_size];
+      _priorities[0] = _priorities[_size];
+      _positions[_items[0]] = 0;
       _bubbleDown(0);
     }
-    return first;
+
+    return result;
+  }
+
+  void decreaseKey(int index, double newPriority) {
+    final pos = _positions[index];
+    if (pos < 0) return;
+    if (newPriority >= _priorities[pos]) return;
+    _priorities[pos] = newPriority;
+    _bubbleUp(pos);
   }
 
   void _bubbleUp(int index) {
+    final item = _items[index];
+    final priority = _priorities[index];
+
     while (index > 0) {
       final parent = (index - 1) >> 1;
-      if (_items[parent].priority <= _items[index].priority) break;
-      final temp = _items[parent];
-      _items[parent] = _items[index];
-      _items[index] = temp;
+      if (_priorities[parent] <= priority) break;
+
+      _items[index] = _items[parent];
+      _priorities[index] = _priorities[parent];
+      _positions[_items[parent]] = index;
+
       index = parent;
     }
+
+    _items[index] = item;
+    _priorities[index] = priority;
+    _positions[item] = index;
   }
 
   void _bubbleDown(int index) {
-    while (true) {
-      final left = index * 2 + 1;
-      final right = left + 1;
-      var smallest = index;
+    final item = _items[index];
+    final priority = _priorities[index];
+    final halfSize = _size >> 1;
 
-      if (left < _items.length &&
-          _items[left].priority < _items[smallest].priority) {
-        smallest = left;
-      }
-      if (right < _items.length &&
-          _items[right].priority < _items[smallest].priority) {
-        smallest = right;
-      }
-      if (smallest == index) break;
+    while (index < halfSize) {
+      var child = (index << 1) + 1;
+      var childPriority = _priorities[child];
 
-      final temp = _items[smallest];
-      _items[smallest] = _items[index];
-      _items[index] = temp;
-      index = smallest;
+      final right = child + 1;
+      if (right < _size && _priorities[right] < childPriority) {
+        child = right;
+        childPriority = _priorities[right];
+      }
+
+      if (childPriority >= priority) break;
+
+      _items[index] = _items[child];
+      _priorities[index] = _priorities[child];
+      _positions[_items[child]] = index;
+
+      index = child;
     }
+
+    _items[index] = item;
+    _priorities[index] = priority;
+    _positions[item] = index;
   }
 }
+
+// ============================================================
+// UTILITY FUNCTIONS
+// ============================================================
 
 double _distanceMeters(Offset a, Offset b) {
   const p = 0.017453292519943295;
